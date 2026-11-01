@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AirMirror TV</string>
-    <string name="status_starting">Starting AirPlay receiver…</string>
-    <string name="status_ready">On your iPhone, open Control Center, tap Screen Mirroring, and choose:</string>
-    <string name="status_no_network">No Wi‑Fi or Ethernet connection. Connect this TV box and your iPhone to the same network.</string>
-    <string name="status_error">Could not start the receiver: %1$s</string>
+    <string name="tagline">Wireless screen mirroring from your iPhone</string>
+    <string name="status_starting">Starting…</string>
+    <string name="status_ready">Ready to mirror</string>
+    <string name="status_no_network">No network. Connect this TV box to Wi‑Fi or Ethernet.</string>
+    <string name="status_error">Could not start: %1$s</string>
     <string name="status_address">TV box address: %1$s</string>
+    <string name="name_label">CHOOSE THIS NAME ON YOUR IPHONE</string>
+    <string name="how_to">How to connect</string>
+    <string name="step_1">Connect your iPhone to the same Wi‑Fi as this TV</string>
+    <string name="step_2">Open Control Center and tap Screen Mirroring</string>
+    <string name="step_3">Pick the name shown here. Your screen and sound appear on the TV</string>
 </resources>

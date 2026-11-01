@@ -10,6 +10,8 @@
 
 </div>
 
+<p align="center"><img src="docs/screenshot.png" alt="AirMirror TV home screen" width="800"></p>
+
 ---
 
 ## ✨ Features
