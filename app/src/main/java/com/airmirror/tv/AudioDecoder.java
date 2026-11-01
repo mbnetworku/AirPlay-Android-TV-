@@ -293,9 +293,9 @@ class AudioDecoder {
         int channelMask = channels == 1 ? AudioFormat.CHANNEL_OUT_MONO : AudioFormat.CHANNEL_OUT_STEREO;
         int encoding = AudioFormat.ENCODING_PCM_16BIT;
         int minBuffer = AudioTrack.getMinBufferSize(sampleRate, channelMask, encoding);
-        // A small amount of headroom over the device minimum absorbs Wi‑Fi jitter without
-        // adding noticeable lag. The old 2x margin cost tens of ms of extra audio delay.
-        int bufferSize = (int) (Math.max(minBuffer, 4096) * 1.2);
+        // A trimmed buffer (1.2x minimum) saved tens of ms of lag but broke playback on this
+        // hardware, so back to a safe margin. Correct, working sound first; latency later.
+        int bufferSize = Math.max(minBuffer, 8192) * 2;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return new AudioTrack(AudioManager.STREAM_MUSIC, sampleRate, channelMask, encoding,
                     bufferSize, AudioTrack.MODE_STREAM);
