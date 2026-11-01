@@ -51,3 +51,9 @@ trust store can't reach Maven over HTTPS on this machine.
 - Sound from mirroring uses AAC-ELD, which works on every Android 5+ device. Music-only AirPlay
   uses ALAC, and only plays if the box has an ALAC decoder.
 - Works on Android 5.0 (Lollipop) and newer.
+
+## License
+
+Copyright (c) 2026 mbnetworku. Released under the MIT License, see `LICENSE`.
+The `airplay/` module is derived from serezhka/java-airplay (MIT), whose notice is kept in
+`airplay/LICENSE-java-airplay`.
