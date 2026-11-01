@@ -81,11 +81,16 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     private String pendingApprovalName;
     private Consumer<Boolean> pendingApprovalDecision;
 
+    /** How a new connection is let through. Kept as plain strings so they're simple prefs values. */
+    static final String MODE_APPROVAL = "approval"; // ask Allow/Deny on the TV (default)
+    static final String MODE_PIN = "pin"; // enter a code on the iPhone — not implemented yet
+    static final String MODE_NONE = "none"; // anyone can connect automatically
+
     @Override
     public void onCreate() {
         super.onCreate();
         playback = new MirrorPlayback(this);
-        playback.setApprovalGate(this);
+        applyConnectMode();
         MdnsAdvertiser.deviceIdOverride = deviceId();
         startForeground(1, buildNotification(getString(R.string.status_starting)));
         startReceiver();
@@ -156,6 +161,24 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
 
     MirrorPlayback playback() {
         return playback;
+    }
+
+    // --- Connect mode (Settings) ---
+
+    String connectMode() {
+        String mode = getSharedPreferences(PREFS, MODE_PRIVATE).getString("connect_mode", MODE_APPROVAL);
+        // PIN mode isn't built yet; never leave the receiver running unguarded because of it.
+        return MODE_PIN.equals(mode) ? MODE_APPROVAL : mode;
+    }
+
+    void setConnectMode(String mode) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("connect_mode", mode).apply();
+        applyConnectMode();
+    }
+
+    private void applyConnectMode() {
+        boolean gated = !MODE_NONE.equals(connectMode());
+        playback.setApprovalGate(gated ? this : null);
     }
 
     // --- MirrorPlayback.ApprovalGate (called from Netty threads) ---

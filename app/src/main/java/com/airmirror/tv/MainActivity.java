@@ -6,7 +6,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
-import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
@@ -18,8 +17,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.provider.Settings;
-import android.text.InputFilter;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
@@ -29,8 +26,6 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
-import android.view.inputmethod.EditorInfo;
-import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -56,7 +51,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
     private TextView nameView;
     private TextView addressView;
     private View statusDot;
-    private View renameButton;
+    private View settingsButton;
     private TextView rotationHint;
     private int rotationDegrees;
 
@@ -106,7 +101,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
     protected void onStart() {
         super.onStart();
         bindService(new Intent(this, MirrorService.class), connection, Context.BIND_AUTO_CREATE);
-        renameButton.requestFocus(); // so OK on the remote opens Rename right away
+        settingsButton.requestFocus(); // so OK on the remote opens Settings right away
     }
 
     @Override
@@ -337,20 +332,11 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         left.addView(space(16));
 
-        TextView rename = text(18, Color.WHITE, true);
-        rename.setText(R.string.rename);
-        rename.setFocusable(true);
-        rename.setClickable(true);
-        rename.setPadding(dp(28), dp(12), dp(28), dp(12));
-        StateListDrawable renameBg = new StateListDrawable();
-        renameBg.addState(new int[]{android.R.attr.state_focused}, rounded(ACCENT, dp(28), 0, 0));
-        renameBg.addState(new int[]{android.R.attr.state_pressed}, rounded(ACCENT, dp(28), 0, 0));
-        renameBg.addState(new int[]{}, rounded(Color.argb(40, 255, 255, 255), dp(28), dp(1), Color.argb(70, 255, 255, 255)));
-        rename.setBackground(renameBg);
-        rename.setOnClickListener(v -> showRenameDialog());
-        left.addView(rename, new LinearLayout.LayoutParams(
+        TextView settings = pillButton(R.string.settings);
+        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        left.addView(settings, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-        renameButton = rename;
+        settingsButton = settings; // first thing OK on the remote should reach
         left.addView(space(16));
 
         addressView = text(14, Color.rgb(120, 135, 170), false);
@@ -428,6 +414,21 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         }
     }
 
+    /** A small remote-focusable pill button, styled like Rename/Settings. */
+    private TextView pillButton(int textRes) {
+        TextView button = text(18, Color.WHITE, true);
+        button.setText(textRes);
+        button.setFocusable(true);
+        button.setClickable(true);
+        button.setPadding(dp(28), dp(12), dp(28), dp(12));
+        StateListDrawable bg = new StateListDrawable();
+        bg.addState(new int[]{android.R.attr.state_focused}, rounded(ACCENT, dp(28), 0, 0));
+        bg.addState(new int[]{android.R.attr.state_pressed}, rounded(ACCENT, dp(28), 0, 0));
+        bg.addState(new int[]{}, rounded(Color.argb(40, 255, 255, 255), dp(28), dp(1), Color.argb(70, 255, 255, 255)));
+        button.setBackground(bg);
+        return button;
+    }
+
     private TextView text(int sp, int color, boolean bold) {
         TextView tv = new TextView(this);
         tv.setTextSize(sp);
@@ -490,75 +491,4 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    // --- Rename ---
-
-    private void showRenameDialog() {
-        EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setText(receiverName());
-        input.setSelectAllOnFocus(true);
-        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(32)});
-        int pad = dp(24);
-        FrameLayout box = new FrameLayout(this);
-        box.setPadding(pad, dp(8), pad, 0);
-        box.addView(input);
-        input.setImeOptions(EditorInfo.IME_ACTION_DONE);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(R.string.rename_title)
-                .setMessage(R.string.rename_hint)
-                .setView(box)
-                .setPositiveButton(R.string.save, (d, w) -> {
-                    String name = cleanName(input.getText().toString());
-                    SharedPreferences.Editor editor = getSharedPreferences("receiver", MODE_PRIVATE).edit();
-                    if (name.isEmpty()) {
-                        editor.remove("name");
-                    } else {
-                        editor.putString("name", name);
-                    }
-                    editor.apply();
-                    applyRename();
-                })
-                .setNeutralButton(R.string.reset, (d, w) -> {
-                    getSharedPreferences("receiver", MODE_PRIVATE).edit().remove("name").apply();
-                    applyRename();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .create();
-        // The keyboard's Done / Enter key saves, since the buttons sit behind the keyboard on a TV.
-        input.setOnEditorActionListener((v, actionId, event) -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
-            dialog.dismiss();
-            return true;
-        });
-        dialog.show();
-    }
-
-    private void applyRename() {
-        // Restart the receiver so the new name is advertised on the network.
-        if (service != null) {
-            service.restart();
-        }
-        setStatus(getString(R.string.status_starting), AMBER);
-    }
-
-    /** mDNS instance names cannot contain dots; keep it short and tidy. */
-    private static String cleanName(String raw) {
-        return raw.replace('.', ' ').trim();
-    }
-
-    /** Mirrors {@link MirrorService}'s own logic, so the dialog has something to show before the service binds. */
-    private String receiverName() {
-        if (service != null) {
-            return service.name();
-        }
-        String custom = getSharedPreferences("receiver", MODE_PRIVATE).getString("name", null);
-        if (custom != null && !custom.trim().isEmpty()) {
-            return cleanName(custom);
-        }
-        String name = Settings.Global.getString(getContentResolver(), "device_name");
-        if (name == null || name.trim().isEmpty()) {
-            name = Build.MODEL;
-        }
-        return cleanName(name);
-    }
 }
