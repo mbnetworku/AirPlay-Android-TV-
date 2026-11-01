@@ -1,26 +1,25 @@
 package com.airmirror.tv;
 
 import android.app.Activity;
-import android.content.Context;
-import android.content.SharedPreferences;
 import android.app.AlertDialog;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.graphics.Color;
-import android.graphics.drawable.StateListDrawable;
-import android.text.InputFilter;
-import android.view.inputmethod.EditorInfo;
-import android.widget.EditText;
 import android.graphics.Outline;
-import android.graphics.drawable.GradientDrawable;
-import android.view.ViewOutlineProvider;
-import android.widget.ImageView;
 import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
-import android.net.wifi.WifiManager;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.StateListDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.InputFilter;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
@@ -28,34 +27,27 @@ import android.view.KeyEvent;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import com.github.serezhka.airplay.server.AirPlayConfig;
-import com.github.serezhka.airplay.server.AirPlayServer;
-import com.github.serezhka.airplay.server.discovery.MdnsAdvertiser;
-
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.NetworkInterface;
-import java.security.SecureRandom;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
- * Full-screen AirPlay receiver. While this screen is open the TV box shows up under
- * Screen Mirroring on iPhone / iPad / Mac, and the mirrored picture fills the TV.
+ * Full-screen AirPlay receiver UI. The actual receiver runs in {@link MirrorService}, so it
+ * keeps listening after this screen is closed; this Activity binds to it for the picture, the
+ * status display and the approval prompt, and the service brings it back to the front itself
+ * whenever a phone actually starts mirroring.
  */
-public class MainActivity extends Activity implements MirrorPlayback.Listener, TextureView.SurfaceTextureListener {
+public class MainActivity extends Activity implements MirrorService.UiCallback, TextureView.SurfaceTextureListener {
 
     private static final String TAG = "AirMirrorTV";
 
-    private final ExecutorService serverExecutor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private FrameLayout root;
     private TextureView surfaceView;
@@ -73,129 +65,135 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, T
     private static final int RED = Color.rgb(255, 82, 82);
     private static final int ACCENT = Color.rgb(76, 141, 255);
 
-    private MirrorPlayback playback;
-    private AirPlayServer server;
-    private WifiManager.MulticastLock multicastLock;
+    private MirrorService service;
+    private Surface pendingSurface;
+    private AlertDialog approvalDialog;
     private int videoWidth;
     private int videoHeight;
+
+    private final ServiceConnection connection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+            service = ((MirrorService.LocalBinder) binder).service();
+            service.registerUi(MainActivity.this);
+            if (pendingSurface != null) {
+                service.playback().setSurface(pendingSurface);
+            }
+            refreshStatus();
+            service.checkPendingApproval();
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            service = null;
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         buildUi();
-        playback = new MirrorPlayback(this);
-        MdnsAdvertiser.deviceIdOverride = deviceId();
+        Intent intent = new Intent(this, MirrorService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
     }
 
     @Override
     protected void onStart() {
         super.onStart();
-        startReceiver();
+        bindService(new Intent(this, MirrorService.class), connection, Context.BIND_AUTO_CREATE);
         renameButton.requestFocus(); // so OK on the remote opens Rename right away
     }
 
     @Override
     protected void onStop() {
         super.onStop();
-        stopReceiver();
+        if (service != null) {
+            service.unregisterUi(this);
+        }
+        unbindService(connection);
+        // The service itself (and the AirPlay receiver in it) keeps running in the background.
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        serverExecutor.shutdown();
-    }
-
-    private void startReceiver() {
-        showOverlay(true);
-        setStatus(getString(R.string.status_starting), AMBER);
-        String name = receiverName();
-        nameView.setText(name);
-        List<String> addresses = localAddresses();
+    private void refreshStatus() {
+        if (service == null) {
+            return;
+        }
+        List<String> addresses = service.addresses();
         if (addresses.isEmpty()) {
             setStatus(getString(R.string.status_no_network), RED);
             nameView.setText("");
             addressView.setText("");
             return;
         }
+        nameView.setText(service.name());
         addressView.setText(getString(R.string.status_address, TextUtils.join("  ·  ", addresses)));
-
-        WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        if (wifi != null) {
-            multicastLock = wifi.createMulticastLock("airplay-mdns");
-            multicastLock.setReferenceCounted(false);
-            multicastLock.acquire();
-        }
-
-        AirPlayConfig config = new AirPlayConfig();
-        config.setServerName(name);
-        config.setWidth(1920);
-        config.setHeight(1080);
-        config.setFps(60);
-        config.setHlsEnabled(false);
-        config.setMdnsLoopback(false);
-        config.setTrayEnabled(false);
-
-        serverExecutor.execute(() -> {
-            try {
-                AirPlayServer s = new AirPlayServer(config, playback);
-                s.start();
-                server = s;
-                Log.i(TAG, "AirPlay receiver started as " + name);
-                runOnUiThread(() -> setStatus(getString(R.string.status_ready), GREEN));
-            } catch (Throwable e) {
-                Log.e(TAG, "Cannot start AirPlay receiver", e);
-                runOnUiThread(() -> setStatus(getString(R.string.status_error, String.valueOf(e.getMessage())), RED));
-            }
-        });
+        setStatus(getString(service.isReady() ? R.string.status_ready : R.string.status_starting),
+                service.isReady() ? GREEN : AMBER);
     }
 
-    private void stopReceiver() {
-        serverExecutor.execute(() -> {
-            AirPlayServer s = server;
-            server = null;
-            if (s != null) {
-                try {
-                    s.stop();
-                } catch (Throwable e) {
-                    Log.w(TAG, "Error stopping receiver", e);
-                }
-            }
-            playback.release();
-        });
-        if (multicastLock != null && multicastLock.isHeld()) {
-            multicastLock.release();
-        }
-    }
+    // --- MirrorService.UiCallback (always delivered on the main thread) ---
 
-    // --- MirrorPlayback.Listener (called from network threads) ---
+    @Override
+    public void onStatusChanged() {
+        refreshStatus();
+    }
 
     @Override
     public void onMirroringStarted() {
-        runOnUiThread(() -> showOverlay(false));
+        showOverlay(false);
     }
 
     @Override
     public void onMirroringStopped() {
-        runOnUiThread(() -> showOverlay(true));
+        showOverlay(true);
     }
 
     @Override
     public void onVideoSize(int width, int height) {
-        runOnUiThread(() -> {
-            videoWidth = width;
-            videoHeight = height;
-            layoutVideo();
-            showOverlay(false);
-        });
+        videoWidth = width;
+        videoHeight = height;
+        layoutVideo();
+        showOverlay(false);
+    }
+
+    @Override
+    public void onApprovalNeeded(String deviceName) {
+        if (approvalDialog != null) {
+            approvalDialog.dismiss();
+        }
+        approvalDialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.approval_title)
+                .setMessage(getString(R.string.approval_message, deviceName))
+                .setPositiveButton(R.string.approval_allow, (d, w) -> {
+                    if (service != null) {
+                        service.resolveApproval(true);
+                    }
+                })
+                .setNegativeButton(R.string.approval_deny, (d, w) -> {
+                    if (service != null) {
+                        service.resolveApproval(false);
+                    }
+                })
+                .setCancelable(false)
+                .create();
+        approvalDialog.show();
     }
 
     // --- Surface ---
 
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
-        playback.setSurface(new Surface(texture));
+        Surface surface = new Surface(texture);
+        if (service != null) {
+            service.playback().setSurface(surface);
+        } else {
+            pendingSurface = surface;
+        }
     }
 
     @Override
@@ -204,7 +202,10 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, T
 
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
-        playback.setSurface(null);
+        pendingSurface = null;
+        if (service != null) {
+            service.playback().setSurface(null);
+        }
         return true; // we're done with it; let the system release it
     }
 
@@ -489,7 +490,7 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, T
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    // --- Identity / network ---
+    // --- Rename ---
 
     private void showRenameDialog() {
         EditText input = new EditText(this);
@@ -515,14 +516,11 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, T
                         editor.putString("name", name);
                     }
                     editor.apply();
-                    // Restart so the new name is advertised on the network.
-                    stopReceiver();
-                    startReceiver();
+                    applyRename();
                 })
                 .setNeutralButton(R.string.reset, (d, w) -> {
                     getSharedPreferences("receiver", MODE_PRIVATE).edit().remove("name").apply();
-                    stopReceiver();
-                    startReceiver();
+                    applyRename();
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .create();
@@ -535,12 +533,24 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, T
         dialog.show();
     }
 
+    private void applyRename() {
+        // Restart the receiver so the new name is advertised on the network.
+        if (service != null) {
+            service.restart();
+        }
+        setStatus(getString(R.string.status_starting), AMBER);
+    }
+
     /** mDNS instance names cannot contain dots; keep it short and tidy. */
     private static String cleanName(String raw) {
         return raw.replace('.', ' ').trim();
     }
 
+    /** Mirrors {@link MirrorService}'s own logic, so the dialog has something to show before the service binds. */
     private String receiverName() {
+        if (service != null) {
+            return service.name();
+        }
         String custom = getSharedPreferences("receiver", MODE_PRIVATE).getString("name", null);
         if (custom != null && !custom.trim().isEmpty()) {
             return cleanName(custom);
@@ -549,47 +559,6 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, T
         if (name == null || name.trim().isEmpty()) {
             name = Build.MODEL;
         }
-        // mDNS instance names cannot contain dots.
-        return name.replace('.', ' ').trim();
-    }
-
-    /** A random, locally administered MAC-style id, kept so the iPhone recognises this TV next time. */
-    private String deviceId() {
-        SharedPreferences prefs = getSharedPreferences("receiver", MODE_PRIVATE);
-        String id = prefs.getString("device_id", null);
-        if (id == null) {
-            byte[] mac = new byte[6];
-            new SecureRandom().nextBytes(mac);
-            mac[0] = (byte) ((mac[0] & 0xFC) | 0x02);
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < mac.length; i++) {
-                sb.append(String.format("%02X", mac[i]));
-                if (i < mac.length - 1) {
-                    sb.append(':');
-                }
-            }
-            id = sb.toString();
-            prefs.edit().putString("device_id", id).apply();
-        }
-        return id;
-    }
-
-    private static List<String> localAddresses() {
-        List<String> result = new ArrayList<>();
-        try {
-            for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
-                if (!ni.isUp() || ni.isLoopback() || ni.isPointToPoint()) {
-                    continue;
-                }
-                for (InetAddress address : Collections.list(ni.getInetAddresses())) {
-                    if (address instanceof Inet4Address) {
-                        result.add(address.getHostAddress());
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Cannot list network interfaces", e);
-        }
-        return result;
+        return cleanName(name);
     }
 }

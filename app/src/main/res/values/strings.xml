@@ -14,6 +14,12 @@
     <string name="save">Save</string>
     <string name="reset">Default</string>
     <string name="rotated">Rotated %1$d°  ·  use ◀ ▶ on the remote</string>
+    <string name="notif_waiting">Waiting for AirPlay as \"%1$s\"</string>
+    <string name="notif_approval">%1$s wants to connect — open the app to allow it</string>
+    <string name="approval_title">Allow this device?</string>
+    <string name="approval_message">%1$s wants to mirror its screen to this TV.</string>
+    <string name="approval_allow">Allow</string>
+    <string name="approval_deny">Deny</string>
     <string name="how_to">How to connect</string>
     <string name="step_1">Connect your iPhone to the same Wi‑Fi as this TV</string>
     <string name="step_2">Open Control Center and tap Screen Mirroring</string>
