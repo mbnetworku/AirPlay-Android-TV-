@@ -13,16 +13,20 @@ import android.graphics.Outline;
 import android.graphics.drawable.GradientDrawable;
 import android.view.ViewOutlineProvider;
 import android.widget.ImageView;
+import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.view.KeyEvent;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -47,19 +51,22 @@ import java.util.concurrent.Executors;
  * Full-screen AirPlay receiver. While this screen is open the TV box shows up under
  * Screen Mirroring on iPhone / iPad / Mac, and the mirrored picture fills the TV.
  */
-public class MainActivity extends Activity implements MirrorPlayback.Listener, SurfaceHolder.Callback {
+public class MainActivity extends Activity implements MirrorPlayback.Listener, TextureView.SurfaceTextureListener {
 
     private static final String TAG = "AirMirrorTV";
 
     private final ExecutorService serverExecutor = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private FrameLayout root;
-    private SurfaceView surfaceView;
+    private TextureView surfaceView;
     private View overlay;
     private TextView statusView;
     private TextView nameView;
     private TextView addressView;
     private View statusDot;
     private View renameButton;
+    private TextView rotationHint;
+    private int rotationDegrees;
 
     private static final int AMBER = Color.rgb(255, 193, 7);
     private static final int GREEN = Color.rgb(61, 220, 132);
@@ -187,17 +194,48 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, S
     // --- Surface ---
 
     @Override
-    public void surfaceCreated(SurfaceHolder holder) {
-        playback.setSurface(holder.getSurface());
+    public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
+        playback.setSurface(new Surface(texture));
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+    public void onSurfaceTextureSizeChanged(SurfaceTexture texture, int width, int height) {
     }
 
     @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
+    public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
         playback.setSurface(null);
+        return true; // we're done with it; let the system release it
+    }
+
+    @Override
+    public void onSurfaceTextureUpdated(SurfaceTexture texture) {
+    }
+
+    // --- Rotate (remote d-pad left/right while mirroring) ---
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (overlay.getVisibility() != View.VISIBLE) { // only while a picture is actually showing
+            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                rotate(90);
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                rotate(-90);
+                return true;
+            }
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    private void rotate(int deltaDegrees) {
+        rotationDegrees = ((rotationDegrees + deltaDegrees) % 360 + 360) % 360;
+        layoutVideo();
+        rotationHint.setText(getString(R.string.rotated, rotationDegrees));
+        rotationHint.setVisibility(View.VISIBLE);
+        mainHandler.removeCallbacksAndMessages(null);
+        mainHandler.postDelayed(() -> rotationHint.setVisibility(View.GONE), 1500);
     }
 
     // --- UI ---
@@ -206,11 +244,20 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, S
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
-        surfaceView = new SurfaceView(this);
-        surfaceView.getHolder().addCallback(this);
+        surfaceView = new TextureView(this);
+        surfaceView.setSurfaceTextureListener(this);
         root.addView(surfaceView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
         root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> layoutVideo());
+
+        rotationHint = text(18, Color.WHITE, true);
+        rotationHint.setBackground(rounded(Color.argb(190, 20, 24, 40), dp(24), 0, 0));
+        rotationHint.setPadding(dp(24), dp(12), dp(24), dp(12));
+        rotationHint.setVisibility(View.GONE);
+        FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        hintLp.bottomMargin = dp(48);
+        root.addView(rotationHint, hintLp);
 
         // Idle screen: brand + receiver name on the left, how-to steps on the right.
         LinearLayout panel = new LinearLayout(this);
@@ -333,28 +380,41 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, S
         setContentView(root);
     }
 
-    /** Letterbox the picture: portrait iPhone screens get bars left and right. */
+    /**
+     * Letterbox the picture to fit the TV, then apply the manual rotation on top. A 90°/270°
+     * rotation swaps which dimension is "wide", so we fit using the swapped video aspect and
+     * give the (unrotated) view the swapped size back, so that after rotating it lands at the
+     * fitted size.
+     */
     private void layoutVideo() {
         int pw = root.getWidth();
         int ph = root.getHeight();
         if (pw == 0 || ph == 0) {
             return;
         }
-        int w = pw;
-        int h = ph;
-        if (videoWidth > 0 && videoHeight > 0) {
-            if ((long) videoWidth * ph > (long) videoHeight * pw) {
-                h = (int) ((long) pw * videoHeight / videoWidth);
+        boolean swapped = rotationDegrees == 90 || rotationDegrees == 270;
+        int effVideoW = swapped ? videoHeight : videoWidth;
+        int effVideoH = swapped ? videoWidth : videoHeight;
+
+        int fitW = pw;
+        int fitH = ph;
+        if (effVideoW > 0 && effVideoH > 0) {
+            if ((long) effVideoW * ph > (long) effVideoH * pw) {
+                fitH = (int) ((long) pw * effVideoH / effVideoW);
             } else {
-                w = (int) ((long) ph * videoWidth / videoHeight);
+                fitW = (int) ((long) ph * effVideoW / effVideoH);
             }
         }
+
+        int w = swapped ? fitH : fitW;
+        int h = swapped ? fitW : fitH;
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) surfaceView.getLayoutParams();
         if (lp.width != w || lp.height != h) {
             lp.width = w;
             lp.height = h;
             surfaceView.setLayoutParams(lp);
         }
+        surfaceView.setRotation(rotationDegrees);
     }
 
     private void showOverlay(boolean show) {
@@ -362,6 +422,7 @@ public class MainActivity extends Activity implements MirrorPlayback.Listener, S
         if (show) {
             videoWidth = 0;
             videoHeight = 0;
+            rotationDegrees = 0; // start each mirroring session unrotated
             layoutVideo();
         }
     }

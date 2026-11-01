@@ -13,6 +13,7 @@
     <string name="rename_hint">This is the name your iPhone shows under Screen Mirroring.</string>
     <string name="save">Save</string>
     <string name="reset">Default</string>
+    <string name="rotated">Rotated %1$d°  ·  use ◀ ▶ on the remote</string>
     <string name="how_to">How to connect</string>
     <string name="step_1">Connect your iPhone to the same Wi‑Fi as this TV</string>
     <string name="step_2">Open Control Center and tap Screen Mirroring</string>
