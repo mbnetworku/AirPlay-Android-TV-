@@ -34,6 +34,8 @@ class AudioDecoder {
     private MediaCodec codec;
     private AudioTrack track;
     private float volume = 1f;
+    /** Non-null while active: this device's own ALAC MediaCodec is broken, so we decode it ourselves. */
+    private volatile AlacDecoder alacDecoder;
 
     void start(AudioStreamInfo info, float volume) {
         synchronized (lock) {
@@ -42,6 +44,27 @@ class AudioDecoder {
             int[] rateAndChannels = rateAndChannelsFor(info.getAudioFormat());
             int sampleRate = rateAndChannels[0];
             int channels = rateAndChannels[1];
+
+            if (info.getCompressionType() == AudioStreamInfo.CompressionType.ALAC) {
+                // OMX.google.alac.decoder is the only ALAC component on this box, and its
+                // native_configure() fails unconditionally here even with a byte-correct magic
+                // cookie (verified separately) - a broken vendor build, not a bad request from
+                // us. Decode ALAC in pure Java instead of depending on it.
+                try {
+                    track = createTrack(sampleRate, channels);
+                    track.setVolume(volume);
+                    track.play();
+                    int frameLength = info.getSamplesPerFrame() > 0 ? info.getSamplesPerFrame() : 352;
+                    alacDecoder = new AlacDecoder(channels, frameLength);
+                    Log.i(TAG, "Audio stream ALAC " + sampleRate + "Hz x" + channels
+                            + "ch (software decode, frame=" + frameLength + ")");
+                } catch (Exception e) {
+                    Log.e(TAG, "Cannot start software ALAC decode", e);
+                    release();
+                }
+                return;
+            }
+
             MediaFormat format = formatFor(info.getCompressionType(), sampleRate, channels,
                     info.getSamplesPerFrame());
             if (format == null) {
@@ -100,7 +123,28 @@ class AudioDecoder {
 
     void feed(byte[] data, int offset, int length) {
         synchronized (lock) {
-            if (codec == null || length <= 0) {
+            if (length <= 0) {
+                return;
+            }
+            AlacDecoder dec = alacDecoder;
+            if (dec != null) {
+                AudioTrack out = track;
+                if (out == null) {
+                    return;
+                }
+                byte[] frame = (offset == 0 && length == data.length)
+                        ? data : java.util.Arrays.copyOfRange(data, offset, offset + length);
+                try {
+                    short[] pcm = dec.decode(frame);
+                    if (pcm.length > 0) {
+                        out.write(pcm, 0, pcm.length);
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Software ALAC decode failed for this frame", e);
+                }
+                return;
+            }
+            if (codec == null) {
                 return;
             }
             try {
@@ -319,6 +363,7 @@ class AudioDecoder {
     }
 
     private void release() {
+        alacDecoder = null;
         if (codec != null) {
             try {
                 codec.stop();
