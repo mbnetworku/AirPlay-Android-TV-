@@ -96,13 +96,9 @@ public class MirrorPlayback implements Playback {
     @Override
     public void onVideoFormat(VideoStreamInfo videoStreamInfo) {
         Log.i(TAG, "Video stream: " + videoStreamInfo + " from " + clientName);
-        // Mirroring and video-casting can't both hold the screen surface at once; let go of
-        // whichever one the previous session was using before this one tries to grab it.
-        releaseVodPlayer();
         ApprovalGate gate = approvalGate;
         if (gate == null) {
-            videoActive = true;
-            listener.onMirroringStarted();
+            beginMirroring();
             return;
         }
         approved = false;
@@ -113,12 +109,24 @@ public class MirrorPlayback implements Playback {
             approved = ok;
             if (ok) {
                 Log.i(TAG, "Approved: " + name);
-                videoActive = true;
-                listener.onMirroringStarted();
+                beginMirroring();
             } else {
                 Log.i(TAG, "Not approved, staying blank: " + name);
             }
         });
+    }
+
+    /**
+     * Mirroring doesn't always go through {@link #onVideoFormat}; some senders go straight to
+     * {@link #onVideo}, which starts a session itself the same way. Both paths call this, so the
+     * surface handoff away from video-casting happens no matter which one a given sender uses.
+     */
+    private void beginMirroring() {
+        // Mirroring and video-casting can't both hold the screen surface at once; let go of
+        // whichever one the previous session was using before this one tries to grab it.
+        releaseVodPlayer();
+        videoActive = true;
+        listener.onMirroringStarted();
     }
 
     @Override
@@ -127,8 +135,7 @@ public class MirrorPlayback implements Playback {
             return; // waiting on (or declined) approval; drop frames instead of decoding them
         }
         if (!videoActive) {
-            videoActive = true;
-            listener.onMirroringStarted();
+            beginMirroring();
         }
         video.feed(bytes);
     }
