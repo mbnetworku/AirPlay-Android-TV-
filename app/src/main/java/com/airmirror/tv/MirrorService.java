@@ -16,6 +16,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 
+import com.github.serezhka.airplay.protocol.pairing.PairingIdentity;
 import com.github.serezhka.airplay.server.AirPlayConfig;
 import com.github.serezhka.airplay.server.AirPlayServer;
 import com.github.serezhka.airplay.server.discovery.MdnsAdvertiser;
@@ -271,7 +272,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
 
         serverExecutor.execute(() -> {
             try {
-                AirPlayServer s = new AirPlayServer(config, playback);
+                AirPlayServer s = new AirPlayServer(config, playback, pairingIdentity());
                 s.start();
                 server = s;
                 Log.i(TAG, "AirPlay receiver started as " + name);
@@ -402,6 +403,32 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
             prefs.edit().putString("device_id", id).apply();
         }
         return id;
+    }
+
+    /**
+     * The receiver's cryptographic identity, kept stable across restarts. Without this, every
+     * restart (every reinstall, rename, or Settings change) presented the phone with a brand-new
+     * identity even though the device id/name stayed the same — which is exactly the mismatch
+     * AirPlay's pairing treats as suspicious, silently refusing to (re)connect afterward.
+     */
+    private PairingIdentity pairingIdentity() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        String hex = prefs.getString("pairing_seed", null);
+        byte[] seed;
+        if (hex == null) {
+            seed = PairingIdentity.newSeed();
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : seed) {
+                sb.append(String.format("%02x", b));
+            }
+            prefs.edit().putString("pairing_seed", sb.toString()).apply();
+        } else {
+            seed = new byte[hex.length() / 2];
+            for (int i = 0; i < seed.length; i++) {
+                seed[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+            }
+        }
+        return PairingIdentity.fromSeed(seed);
     }
 
     private static List<String> localAddresses() {

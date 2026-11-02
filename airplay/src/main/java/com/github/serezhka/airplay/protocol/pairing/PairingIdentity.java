@@ -1,9 +1,14 @@
 package com.github.serezhka.airplay.protocol.pairing;
 
+import net.i2p.crypto.eddsa.EdDSAPrivateKey;
 import net.i2p.crypto.eddsa.EdDSAPublicKey;
 import net.i2p.crypto.eddsa.KeyPairGenerator;
+import net.i2p.crypto.eddsa.spec.EdDSANamedCurveTable;
+import net.i2p.crypto.eddsa.spec.EdDSAPrivateKeySpec;
+import net.i2p.crypto.eddsa.spec.EdDSAPublicKeySpec;
 
 import java.security.KeyPair;
+import java.security.SecureRandom;
 
 
 /**
@@ -23,6 +28,27 @@ public final class PairingIdentity {
 
     public static PairingIdentity generate() {
         return new PairingIdentity(new KeyPairGenerator().generateKeyPair());
+    }
+
+    /**
+     * Rebuilds the exact same identity (same keypair, same public key) from a 32-byte seed
+     * saved earlier with {@link #newSeed()} — so the receiver presents a stable identity across
+     * restarts instead of a fresh random one every time, which breaks a phone's existing pairing.
+     */
+    public static PairingIdentity fromSeed(byte[] seed) {
+        var params = EdDSANamedCurveTable.getByName(EdDSANamedCurveTable.ED_25519);
+        var privateSpec = new EdDSAPrivateKeySpec(seed, params);
+        var privateKey = new EdDSAPrivateKey(privateSpec);
+        var publicSpec = new EdDSAPublicKeySpec(privateSpec.getA(), params);
+        var publicKey = new EdDSAPublicKey(publicSpec);
+        return new PairingIdentity(new KeyPair(publicKey, privateKey));
+    }
+
+    /** A fresh random 32-byte seed for {@link #fromSeed(byte[])}, to be saved by the caller. */
+    public static byte[] newSeed() {
+        byte[] seed = new byte[32];
+        new SecureRandom().nextBytes(seed);
+        return seed;
     }
 
     public byte[] publicKey() {
