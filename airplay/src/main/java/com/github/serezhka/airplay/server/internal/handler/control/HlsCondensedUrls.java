@@ -4,8 +4,10 @@ import io.lindstrom.m3u8.model.MediaPlaylist;
 import io.lindstrom.m3u8.model.MediaSegment;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 /** Expand {@code YT-EXT-CONDENSED-URL} media playlists into full segment URIs. */
 @Slf4j
@@ -18,13 +20,17 @@ final class HlsCondensedUrls {
     }
 
     static MediaPlaylist expand(MediaPlaylist mediaPlaylist) {
-        var condensedUrl = mediaPlaylist.comments().stream()
+        // Matcher.results() needs API 34; this app's floor is API 21, so collect matches by hand.
+        Map<String, String> condensedUrl = new LinkedHashMap<>();
+        mediaPlaylist.comments().stream()
                 .filter(comment -> comment.startsWith("YT-EXT-CONDENSED-URL:"))
                 .map(comment -> comment.replace("YT-EXT-CONDENSED-URL:", ""))
-                .flatMap(attributes -> ATTR.matcher(attributes).results())
-                .collect(Collectors.toMap(
-                        matcher -> matcher.group(1),
-                        matcher -> matcher.group(2) != null ? matcher.group(2) : matcher.group(3)));
+                .forEach(attributes -> {
+                    Matcher m = ATTR.matcher(attributes);
+                    while (m.find()) {
+                        condensedUrl.put(m.group(1), m.group(2) != null ? m.group(2) : m.group(3));
+                    }
+                });
         if (condensedUrl.isEmpty()) {
             return mediaPlaylist;
         }

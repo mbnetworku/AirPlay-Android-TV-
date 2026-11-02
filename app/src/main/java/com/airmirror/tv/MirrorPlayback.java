@@ -96,6 +96,9 @@ public class MirrorPlayback implements Playback {
     @Override
     public void onVideoFormat(VideoStreamInfo videoStreamInfo) {
         Log.i(TAG, "Video stream: " + videoStreamInfo + " from " + clientName);
+        // Mirroring and video-casting can't both hold the screen surface at once; let go of
+        // whichever one the previous session was using before this one tries to grab it.
+        releaseVodPlayer();
         ApprovalGate gate = approvalGate;
         if (gate == null) {
             videoActive = true;
@@ -225,6 +228,9 @@ public class MirrorPlayback implements Playback {
 
     private void startVodPlayback(String playlistUri) {
         releaseVodPlayer();
+        // Same reasoning in the other direction: let go of the mirroring decoder's hold on the
+        // surface before the video player tries to take it.
+        video.stop();
         try {
             MediaPlayer mp = new MediaPlayer();
             mp.setDataSource(playlistUri);

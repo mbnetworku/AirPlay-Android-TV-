@@ -88,7 +88,31 @@ class VideoDecoder {
         }
     }
 
+    /**
+     * A fresh decoder lands on the same {@link Surface} a just-released one (mirroring vs. video
+     * casting swap) was using. On slower devices the old one's native teardown can still be
+     * finishing when this one tries to attach, which fails with "already connected" even though
+     * we already told it to let go — so give it one short, bounded retry before giving up.
+     */
     private void createCodec() {
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            if (attemptCreateCodec()) {
+                return;
+            }
+            if (attempt < 2) {
+                Log.w(TAG, "Retrying decoder start, previous surface owner may still be releasing it");
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
+
+    /** @return true if the decoder started; false means the caller may retry. */
+    private boolean attemptCreateCodec() {
         try {
             thread = new HandlerThread("video-decoder");
             thread.start();
@@ -144,9 +168,11 @@ class VideoDecoder {
             waitingForKeyFrame = true;
             firstFrameQueued = false;
             Log.i(TAG, "H.264 decoder started");
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "Cannot start H.264 decoder", e);
             releaseCodec();
+            return false;
         }
     }
 
