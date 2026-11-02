@@ -142,11 +142,32 @@ public class MirrorPlayback implements Playback {
 
     @Override
     public void onAudioFormat(AudioStreamInfo audioStreamInfo) {
-        if (!approved) {
+        if (videoActive || vodActive || awaitingApproval) {
+            // The audio half of a mirroring or video-cast session already gated via its video.
+            if (!approved) {
+                return;
+            }
+            Log.i(TAG, "Audio stream: " + audioStreamInfo);
+            audio.start(audioStreamInfo, (float) volume);
             return;
         }
-        Log.i(TAG, "Audio stream: " + audioStreamInfo);
-        audio.start(audioStreamInfo, (float) volume);
+        // A standalone "share audio to this TV as a speaker" connection (Control Center), with
+        // no video of its own to gate it — ask (or auto-pass if already approved) on its own.
+        ApprovalGate gate = approvalGate;
+        if (gate == null) {
+            Log.i(TAG, "Audio stream: " + audioStreamInfo);
+            audio.start(audioStreamInfo, (float) volume);
+            return;
+        }
+        String name = clientName;
+        gate.requestApproval(name, ok -> {
+            if (ok) {
+                Log.i(TAG, "Audio stream (speaker cast): " + audioStreamInfo);
+                audio.start(audioStreamInfo, (float) volume);
+            } else {
+                Log.i(TAG, "Speaker cast not approved: " + name);
+            }
+        });
     }
 
     @Override
