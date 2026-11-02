@@ -56,7 +56,8 @@ public final class HlsUriRewrite {
      * demuxers probe every playlist before the first frame on a full master.
      */
     public static String preferAvcVariants(String masterPlaylist) {
-        String[] lines = masterPlaylist.split("\\R", -1);
+        // \R (any Unicode linebreak) needs API 24+; this app's floor is API 21, so split explicitly.
+        String[] lines = masterPlaylist.split("\\r\\n|\\r|\\n", -1);
         List<String> headers = new ArrayList<>();
         List<String> audioMedia = new ArrayList<>();
         List<String> variants = new ArrayList<>();
