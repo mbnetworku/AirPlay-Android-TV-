@@ -238,8 +238,30 @@ public class MirrorPlayback implements Playback {
         // Same reasoning in the other direction: let go of the mirroring decoder's hold on the
         // surface before the video player tries to take it.
         video.stop();
+        // On this hardware the just-released decoder's hold on the Surface can take a moment to
+        // actually let go, the same race VideoDecoder.createCodec retries for. A MediaPlayer that
+        // hits that race here throws from setSurface()/prepareAsync() rather than failing softly,
+        // so give it the same bounded retry.
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            if (attemptStartVod(playlistUri)) {
+                return;
+            }
+            if (attempt < 2) {
+                Log.w(TAG, "Retrying video cast start, previous surface owner may still be releasing it");
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+    }
+
+    /** @return true if the player started preparing; false means the caller may retry. */
+    private boolean attemptStartVod(String playlistUri) {
+        MediaPlayer mp = new MediaPlayer();
         try {
-            MediaPlayer mp = new MediaPlayer();
             mp.setDataSource(playlistUri);
             Surface s = surface;
             if (s != null) {
@@ -268,8 +290,21 @@ public class MirrorPlayback implements Playback {
             });
             mp.prepareAsync();
             vodPlayer = mp;
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "Cannot start video casting for " + playlistUri, e);
+            // Unlike the success path, nothing else holds a reference to mp here - leaving it
+            // unreleased would leak its hold on the Surface and jam every mirroring/casting
+            // attempt after it until the app restarts.
+            try {
+                mp.reset();
+            } catch (Exception ignored) {
+            }
+            try {
+                mp.release();
+            } catch (Exception ignored) {
+            }
+            return false;
         }
     }
 
