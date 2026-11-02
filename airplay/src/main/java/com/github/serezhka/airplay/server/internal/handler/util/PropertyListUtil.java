@@ -18,8 +18,17 @@ public class PropertyListUtil {
     /**
      * Bitmask of audio codecs listed under {@code GET /info} {@code audioFormats}
      * ({@code audioInputFormats} / {@code audioOutputFormats}).
+     * <p>
+     * The 4 ALAC bits (0x40000, 0x80000, 0x100000, 0x200000 — see
+     * {@code AudioStreamInfo.AudioFormat}) are left out on purpose: some Android TV boxes'
+     * built-in ALAC decoder fails to configure at all (observed: AOSP SoftALAC rejects a
+     * spec-correct magic cookie with a native "already connected"-class error, suggesting a
+     * broken/outdated vendor OMX component rather than anything wrong with what we send). AAC
+     * stays advertised and is what mirroring's own audio already uses successfully, so leaving
+     * ALAC out should make a sender choose AAC for standalone "share audio" sessions too, instead
+     * of a codec this decoder can't actually play.
      */
-    private static final int INFO_AUDIO_FORMATS_MASK = 0x3FFFFFC;
+    private static final int INFO_AUDIO_FORMATS_MASK = 0x3C3FFFC;
 
     /** {@code type} values pairing {@code audioFormats} / {@code audioLatencies} entries. */
     private static final int INFO_AUDIO_DESCRIPTOR_TYPE_A = 100;
