@@ -189,6 +189,9 @@ class AudioDecoder {
                 MediaFormat f = MediaFormat.createAudioFormat("audio/alac", sampleRate, channels);
                 int frameLength = samplesPerFrame > 0 ? samplesPerFrame : 352;
                 f.setByteBuffer("csd-0", ByteBuffer.wrap(alacMagicCookie(sampleRate, channels, frameLength)));
+                // Some devices' software ALAC decoder needs this spelled out explicitly, since
+                // ALAC frames are larger than the compressed AAC ones Android usually sees.
+                f.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 256 * 1024);
                 return f;
             }
             default:
