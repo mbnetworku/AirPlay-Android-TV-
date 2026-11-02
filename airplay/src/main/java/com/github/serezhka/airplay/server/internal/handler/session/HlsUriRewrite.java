@@ -38,7 +38,9 @@ public final class HlsUriRewrite {
 
     public static String rewritePlaylist(String playlist, String baseUrl, String sessionId) {
         Matcher matcher = MLHLS_URI.matcher(playlist);
-        StringBuilder rewritten = new StringBuilder();
+        // Matcher.appendReplacement(StringBuilder,...) needs API 26+; the StringBuffer overload
+        // does the same job and has existed since API 1, which is what this app's floor needs.
+        StringBuffer rewritten = new StringBuffer();
         while (matcher.find()) {
             matcher.appendReplacement(rewritten, Matcher.quoteReplacement(toLocalUri(matcher.group(), baseUrl, sessionId)));
         }
