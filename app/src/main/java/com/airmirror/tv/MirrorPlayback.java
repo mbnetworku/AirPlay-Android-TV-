@@ -1,5 +1,6 @@
 package com.airmirror.tv;
 
+import android.media.MediaPlayer;
 import android.util.Log;
 import android.view.Surface;
 
@@ -42,6 +43,9 @@ public class MirrorPlayback implements Playback {
     private volatile String clientName = "An iPhone";
     private volatile boolean approved = true;
     private volatile boolean awaitingApproval;
+    private volatile Surface surface;
+    private volatile MediaPlayer vodPlayer;
+    private volatile boolean vodActive;
 
     public MirrorPlayback(Listener listener) {
         this.listener = listener;
@@ -52,12 +56,22 @@ public class MirrorPlayback implements Playback {
     }
 
     public void setSurface(Surface surface) {
+        this.surface = surface;
         video.setSurface(surface);
+        MediaPlayer mp = vodPlayer;
+        if (mp != null && surface != null) {
+            try {
+                mp.setSurface(surface);
+            } catch (Exception e) {
+                Log.w(TAG, "Could not hand the surface to the video player", e);
+            }
+        }
     }
 
     public void release() {
         video.stop();
         audio.stop();
+        releaseVodPlayer();
     }
 
     /** Pass {@code null} to allow every device without asking. */
@@ -166,5 +180,139 @@ public class MirrorPlayback implements Playback {
     @Override
     public double volume() {
         return volume;
+    }
+
+    // --- Single-video casting: the AirPlay button inside Safari/YouTube/etc, not screen mirroring ---
+
+    @Override
+    public void onPlaylist(String playlistUri) {
+        Log.i(TAG, "Cast video: " + playlistUri + " from " + clientName);
+        ApprovalGate gate = approvalGate;
+        if (gate == null) {
+            startVodPlayback(playlistUri);
+            return;
+        }
+        String name = clientName;
+        gate.requestApproval(name, ok -> {
+            if (ok) {
+                startVodPlayback(playlistUri);
+            } else {
+                Log.i(TAG, "Cast not approved: " + name);
+            }
+        });
+    }
+
+    private void startVodPlayback(String playlistUri) {
+        releaseVodPlayer();
+        try {
+            MediaPlayer mp = new MediaPlayer();
+            mp.setDataSource(playlistUri);
+            Surface s = surface;
+            if (s != null) {
+                mp.setSurface(s);
+            }
+            mp.setOnPreparedListener(p -> {
+                try {
+                    p.start();
+                } catch (Exception e) {
+                    Log.w(TAG, "Video player would not start", e);
+                }
+                vodActive = true;
+                listener.onMirroringStarted();
+                observer.onPresented();
+            });
+            mp.setOnVideoSizeChangedListener((p, w, h) -> {
+                if (w > 0 && h > 0) {
+                    listener.onVideoSize(w, h);
+                }
+            });
+            mp.setOnCompletionListener(p -> observer.onEnded());
+            mp.setOnSeekCompleteListener(p -> observer.onSeekDisplayed());
+            mp.setOnErrorListener((p, what, extra) -> {
+                Log.e(TAG, "Video player error " + what + "/" + extra + " for " + playlistUri);
+                return true; // we handled it; suppresses the default "unknown error" dialog-less crash path
+            });
+            mp.prepareAsync();
+            vodPlayer = mp;
+        } catch (Exception e) {
+            Log.e(TAG, "Cannot start video casting for " + playlistUri, e);
+        }
+    }
+
+    @Override
+    public void onPlaylistRemoved() {
+        Log.i(TAG, "Cast playback removed");
+        releaseVodPlayer();
+        listener.onMirroringStopped();
+    }
+
+    @Override
+    public void onPause() {
+        MediaPlayer mp = vodPlayer;
+        if (mp != null) {
+            try {
+                mp.pause();
+            } catch (Exception e) {
+                Log.w(TAG, "Could not pause the video player", e);
+            }
+        }
+    }
+
+    @Override
+    public void onResume() {
+        MediaPlayer mp = vodPlayer;
+        if (mp != null) {
+            try {
+                mp.start();
+            } catch (Exception e) {
+                Log.w(TAG, "Could not resume the video player", e);
+            }
+        }
+    }
+
+    @Override
+    public void onSeek(double positionSeconds) {
+        MediaPlayer mp = vodPlayer;
+        if (mp != null) {
+            try {
+                mp.seekTo((int) (positionSeconds * 1000));
+            } catch (Exception e) {
+                Log.w(TAG, "Could not seek the video player", e);
+            }
+        }
+    }
+
+    @Override
+    public Info info() {
+        MediaPlayer mp = vodPlayer;
+        if (mp == null || !vodActive) {
+            return Info.idle();
+        }
+        try {
+            double duration = Math.max(0, mp.getDuration()) / 1000.0;
+            double position = Math.max(0, mp.getCurrentPosition()) / 1000.0;
+            double rate = mp.isPlaying() ? 1 : 0;
+            return new Info(duration, position, rate);
+        } catch (Exception e) {
+            return Info.idle();
+        }
+    }
+
+    private void releaseVodPlayer() {
+        MediaPlayer mp = vodPlayer;
+        vodPlayer = null;
+        vodActive = false;
+        if (mp != null) {
+            try {
+                mp.reset();
+            } catch (Exception ignored) {
+                // player was in a state that doesn't allow reset; release() below still works
+            }
+            try {
+                mp.release();
+            } catch (Exception e) {
+                Log.w(TAG, "Error releasing the video player", e);
+            }
+        }
     }
 }

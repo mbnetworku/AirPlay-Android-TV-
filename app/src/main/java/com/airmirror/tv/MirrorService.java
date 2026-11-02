@@ -265,7 +265,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
         config.setWidth(1920);
         config.setHeight(1080);
         config.setFps(60);
-        config.setHlsEnabled(false);
+        config.setHlsEnabled(true); // also offer the AirPlay button inside Safari/YouTube/etc, not just mirroring
         config.setMdnsLoopback(false);
         config.setTrayEnabled(false);
 
