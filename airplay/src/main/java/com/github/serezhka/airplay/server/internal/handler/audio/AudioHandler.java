@@ -29,12 +29,20 @@ public class AudioHandler extends ChannelInboundHandlerAdapter {
     private int prevSeqNum;
     private boolean started;
     private int packetsInBuffer;
+    /** Diagnostic: how many UDP packets this handler has seen, regardless of order/validity. */
+    private int packetsSeen;
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         AudioPacket packet = (AudioPacket) msg;
 
         int curSeqNum = packet.getSequenceNumber();
+        packetsSeen++;
+        if (!started || packetsSeen <= 10 || packetsSeen % 50 == 0) {
+            // Diagnostic: confirms whether packets keep arriving at all over time, as opposed to
+            // just the first one, which would point at a network-layer cutoff rather than our code.
+            log.warn("Audio packet #{} arrived: seq={} size={}", packetsSeen, curSeqNum, packet.getEncodedAudioSize());
+        }
         if (started && curSeqNum <= prevSeqNum) {
             return; // old/duplicate packet
         }
@@ -63,9 +71,16 @@ public class AudioHandler extends ChannelInboundHandlerAdapter {
         AudioPacket audioPacket = buffer[curSeqNo % buffer.length];
         if (audioPacket != null && audioPacket.isAvailable()) {
             int size = audioPacket.getEncodedAudioSize();
-            airPlay.decryptAudio(audioPacket.getEncodedAudio(), size);
-            // Pass offset/length so consumers can avoid an extra full-buffer copy.
-            dataConsumer.onAudio(audioPacket.getEncodedAudio(), 0, size);
+            try {
+                airPlay.decryptAudio(audioPacket.getEncodedAudio(), size);
+                // Pass offset/length so consumers can avoid an extra full-buffer copy.
+                dataConsumer.onAudio(audioPacket.getEncodedAudio(), 0, size);
+            } catch (Exception e) {
+                // A Netty UDP handler's exceptions don't propagate anywhere visible by default -
+                // without this, a decrypt/decode failure here would look identical to no packets
+                // arriving at all.
+                log.error("Audio packet seq={} size={} failed to decrypt/decode", curSeqNo, size, e);
+            }
             audioPacket.available(false);
             prevSeqNum = curSeqNo;
             packetsInBuffer--;
@@ -83,5 +98,12 @@ public class AudioHandler extends ChannelInboundHandlerAdapter {
                 return;
             }
         }
+    }
+
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+        // Diagnostic: a Netty pipeline exception (e.g. in the RTP/decrypt decoder upstream of
+        // this handler) otherwise never shows up under this app's own log tags.
+        log.error("Audio channel pipeline exception", cause);
     }
 }

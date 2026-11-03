@@ -10,8 +10,8 @@ android {
         applicationId = "com.airmirror.tv"
         minSdk = 21
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.11"
+        versionCode = 17
+        versionName = "1.16"
     }
 
     buildTypes {

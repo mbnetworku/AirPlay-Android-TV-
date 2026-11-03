@@ -6,17 +6,18 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.text.InputFilter;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Gravity;
@@ -26,10 +27,13 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.List;
 
@@ -54,11 +58,13 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
     private View settingsButton;
     private TextView rotationHint;
     private int rotationDegrees;
+    private LinearLayout rightPanel;
+    private boolean showingSettings;
 
-    private static final int AMBER = Color.rgb(255, 193, 7);
-    private static final int GREEN = Color.rgb(61, 220, 132);
-    private static final int RED = Color.rgb(255, 82, 82);
-    private static final int ACCENT = Color.rgb(76, 141, 255);
+    private static final int AMBER = GlassTheme.AMBER;
+    private static final int GREEN = GlassTheme.GREEN;
+    private static final int RED = GlassTheme.RED;
+    private static final int ACCENT = GlassTheme.ACCENT;
 
     private MirrorService service;
     private Surface pendingSurface;
@@ -76,6 +82,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
             }
             refreshStatus();
             service.checkPendingApproval();
+            rebuildRightPanel();
         }
 
         @Override
@@ -161,22 +168,68 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         if (approvalDialog != null) {
             approvalDialog.dismiss();
         }
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackground(GlassTheme.panel(this, 32));
+        box.setPadding(dp(40), dp(36), dp(40), dp(32));
+
+        TextView title = text(24, GlassTheme.TEXT_PRIMARY, true);
+        title.setGravity(Gravity.START);
+        title.setText(R.string.approval_title);
+        box.addView(title);
+        box.addView(space(12));
+
+        TextView message = text(17, GlassTheme.TEXT_SECONDARY, false);
+        message.setGravity(Gravity.START);
+        message.setText(getString(R.string.approval_message, deviceName));
+        box.addView(message);
+        box.addView(space(28));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+
+        TextView deny = text(17, Color.WHITE, true);
+        deny.setText(R.string.approval_deny);
+        deny.setFocusable(true);
+        deny.setClickable(true);
+        deny.setPadding(dp(28), dp(12), dp(28), dp(12));
+        deny.setBackground(GlassTheme.pillButton(this, 24));
+        buttons.addView(deny);
+
+        View gap = new View(this);
+        buttons.addView(gap, new LinearLayout.LayoutParams(dp(16), 1));
+
+        TextView allow = text(17, Color.WHITE, true);
+        allow.setText(R.string.approval_allow);
+        allow.setFocusable(true);
+        allow.setClickable(true);
+        allow.setPadding(dp(28), dp(12), dp(28), dp(12));
+        allow.setBackground(GlassTheme.panelAccent(this, 24, ACCENT));
+        buttons.addView(allow);
+
+        box.addView(buttons);
+
         approvalDialog = new AlertDialog.Builder(this)
-                .setTitle(R.string.approval_title)
-                .setMessage(getString(R.string.approval_message, deviceName))
-                .setPositiveButton(R.string.approval_allow, (d, w) -> {
-                    if (service != null) {
-                        service.resolveApproval(true);
-                    }
-                })
-                .setNegativeButton(R.string.approval_deny, (d, w) -> {
-                    if (service != null) {
-                        service.resolveApproval(false);
-                    }
-                })
+                .setView(box)
                 .setCancelable(false)
                 .create();
+        approvalDialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        deny.setOnClickListener(v -> {
+            approvalDialog.dismiss();
+            if (service != null) {
+                service.resolveApproval(false);
+            }
+        });
+        allow.setOnClickListener(v -> {
+            approvalDialog.dismiss();
+            if (service != null) {
+                service.resolveApproval(true);
+            }
+        });
         approvalDialog.show();
+        allow.requestFocus();
     }
 
     // --- Surface ---
@@ -247,7 +300,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         root.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> layoutVideo());
 
         rotationHint = text(18, Color.WHITE, true);
-        rotationHint.setBackground(rounded(Color.argb(190, 20, 24, 40), dp(24), 0, 0));
+        rotationHint.setBackground(GlassTheme.panel(this, 24));
         rotationHint.setPadding(dp(24), dp(12), dp(24), dp(12));
         rotationHint.setVisibility(View.GONE);
         FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
@@ -255,19 +308,23 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         hintLp.bottomMargin = dp(48);
         root.addView(rotationHint, hintLp);
 
-        // Idle screen: brand + receiver name on the left, how-to steps on the right.
+        // Idle screen: a colourful glass backdrop with brand + receiver name on the left and
+        // how-to steps on the right, each floating as its own translucent glass panel.
+        FrameLayout backdrop = new FrameLayout(this);
+        backdrop.addView(GlassTheme.buildBackground(this), new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.HORIZONTAL);
         panel.setGravity(Gravity.CENTER_VERTICAL);
-        GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.rgb(8, 12, 28), Color.rgb(24, 40, 92)});
-        panel.setBackground(bg);
         panel.setPadding(dp(72), dp(40), dp(72), dp(40));
 
         // Left column
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
         left.setGravity(Gravity.CENTER_VERTICAL);
+        left.setBackground(GlassTheme.panel(this, 32));
+        left.setPadding(dp(40), dp(36), dp(40), dp(36));
 
         LinearLayout brand = new LinearLayout(this);
         brand.setOrientation(LinearLayout.HORIZONTAL);
@@ -278,17 +335,17 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         logo.setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(16));
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(18));
             }
         });
         brand.addView(logo, new LinearLayout.LayoutParams(dp(64), dp(64)));
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.setPadding(dp(16), 0, 0, 0);
-        TextView title = text(34, Color.WHITE, true);
+        TextView title = text(34, GlassTheme.TEXT_PRIMARY, true);
         title.setGravity(Gravity.START);
         title.setText(R.string.app_name);
-        TextView tagline = text(16, Color.rgb(150, 165, 200), false);
+        TextView tagline = text(16, GlassTheme.TEXT_TERTIARY, false);
         tagline.setGravity(Gravity.START);
         tagline.setText(R.string.tagline);
         titles.addView(title);
@@ -301,14 +358,14 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         LinearLayout chip = new LinearLayout(this);
         chip.setOrientation(LinearLayout.HORIZONTAL);
         chip.setGravity(Gravity.CENTER_VERTICAL);
-        chip.setBackground(rounded(Color.argb(30, 255, 255, 255), dp(24), 0, 0));
+        chip.setBackground(GlassTheme.panelDim(this, 24));
         chip.setPadding(dp(16), dp(8), dp(20), dp(8));
         statusDot = new View(this);
         statusDot.setBackground(oval(AMBER));
         LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(12), dp(12));
         dotLp.rightMargin = dp(10);
         chip.addView(statusDot, dotLp);
-        statusView = text(18, Color.rgb(225, 232, 250), false);
+        statusView = text(18, GlassTheme.TEXT_SECONDARY, false);
         statusView.setGravity(Gravity.START);
         chip.addView(statusView);
         left.addView(chip, new LinearLayout.LayoutParams(
@@ -316,55 +373,236 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         left.addView(space(28));
 
         // Receiver name card
-        TextView nameLabel = text(14, Color.rgb(150, 165, 200), false);
+        TextView nameLabel = text(14, GlassTheme.TEXT_TERTIARY, false);
         nameLabel.setGravity(Gravity.START);
         nameLabel.setLetterSpacing(0.15f);
         nameLabel.setText(R.string.name_label);
         left.addView(nameLabel);
         left.addView(space(8));
-        nameView = text(48, Color.WHITE, true);
+        nameView = text(48, GlassTheme.TEXT_PRIMARY, true);
         nameView.setGravity(Gravity.CENTER_VERTICAL);
         nameView.setSingleLine(true);
         nameView.setEllipsize(TextUtils.TruncateAt.END);
-        nameView.setBackground(rounded(Color.argb(40, 76, 141, 255), dp(20), dp(2), ACCENT));
+        nameView.setBackground(GlassTheme.panelAccent(this, 22, ACCENT));
         nameView.setPadding(dp(28), dp(16), dp(28), dp(16));
         left.addView(nameView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         left.addView(space(16));
 
         TextView settings = pillButton(R.string.settings);
-        settings.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        settings.setOnClickListener(v -> {
+            showingSettings = !showingSettings;
+            rebuildRightPanel();
+        });
         left.addView(settings, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         settingsButton = settings; // first thing OK on the remote should reach
         left.addView(space(16));
 
-        addressView = text(14, Color.rgb(120, 135, 170), false);
+        addressView = text(14, GlassTheme.TEXT_TERTIARY, false);
         addressView.setGravity(Gravity.START);
         left.addView(addressView);
 
         panel.addView(left, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         panel.addView(new View(this), new LinearLayout.LayoutParams(dp(64), 1));
 
-        // Right column: how to connect
-        LinearLayout steps = new LinearLayout(this);
-        steps.setOrientation(LinearLayout.VERTICAL);
-        steps.setBackground(rounded(Color.argb(22, 255, 255, 255), dp(24), dp(1), Color.argb(40, 255, 255, 255)));
-        steps.setPadding(dp(36), dp(32), dp(36), dp(32));
-        TextView howTo = text(22, Color.WHITE, true);
-        howTo.setGravity(Gravity.START);
-        howTo.setText(R.string.how_to);
-        steps.addView(howTo);
-        steps.addView(space(20));
-        steps.addView(step(1, getString(R.string.step_1)));
-        steps.addView(step(2, getString(R.string.step_2)));
-        steps.addView(step(3, getString(R.string.step_3)));
-        panel.addView(steps, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        // Right column: either "how to connect" or Settings, toggled by the button above -
+        // one screen instead of a separate Settings Activity to navigate to and back from.
+        rightPanel = new LinearLayout(this);
+        rightPanel.setOrientation(LinearLayout.VERTICAL);
+        rightPanel.setBackground(GlassTheme.panel(this, 32));
+        rightPanel.setPadding(dp(36), dp(32), dp(36), dp(32));
+        panel.addView(rightPanel, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        rebuildRightPanel();
 
-        overlay = panel;
-        root.addView(panel, new FrameLayout.LayoutParams(
+        backdrop.addView(panel, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        overlay = backdrop;
+        root.addView(backdrop, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         setContentView(root);
+    }
+
+    /** Swaps the right-hand panel between "how to connect" and Settings, in place. */
+    private void rebuildRightPanel() {
+        if (rightPanel == null) {
+            return;
+        }
+        rightPanel.removeAllViews();
+        if (showingSettings) {
+            buildSettingsPanel(rightPanel);
+        } else {
+            buildHowToConnectPanel(rightPanel);
+        }
+    }
+
+    private void buildHowToConnectPanel(LinearLayout into) {
+        TextView howTo = text(22, GlassTheme.TEXT_PRIMARY, true);
+        howTo.setGravity(Gravity.START);
+        howTo.setText(R.string.how_to);
+        into.addView(howTo);
+        into.addView(space(20));
+        into.addView(step(1, getString(R.string.step_1)));
+        into.addView(step(2, getString(R.string.step_2)));
+        into.addView(step(3, getString(R.string.step_3)));
+    }
+
+    private void buildSettingsPanel(LinearLayout into) {
+        TextView title = text(22, GlassTheme.TEXT_PRIMARY, true);
+        title.setGravity(Gravity.START);
+        title.setText(R.string.settings_title);
+        into.addView(title);
+        into.addView(space(20));
+
+        if (service == null) {
+            return;
+        }
+        String current = service.connectMode();
+
+        into.addView(settingsRow(R.string.rename_title,
+                getString(R.string.settings_rename_subtitle, service.name()), v -> showRenameDialog()));
+        into.addView(space(24));
+
+        TextView sectionLabel = text(13, GlassTheme.TEXT_TERTIARY, false);
+        sectionLabel.setGravity(Gravity.START);
+        sectionLabel.setLetterSpacing(0.1f);
+        sectionLabel.setText(R.string.settings_connect_section);
+        into.addView(sectionLabel);
+        into.addView(space(10));
+
+        into.addView(settingsOption(MirrorService.MODE_APPROVAL,
+                R.string.settings_approval_title, R.string.settings_approval_subtitle, current));
+        into.addView(space(12));
+        into.addView(settingsOption(MirrorService.MODE_PIN,
+                R.string.settings_pin_title, R.string.settings_pin_subtitle, current));
+        into.addView(space(12));
+        into.addView(settingsOption(MirrorService.MODE_NONE,
+                R.string.settings_none_title, R.string.settings_none_subtitle, current));
+    }
+
+    private View settingsRow(int titleRes, String subtitle, View.OnClickListener onClick) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setFocusable(true);
+        row.setClickable(true);
+        row.setPadding(dp(20), dp(16), dp(20), dp(16));
+        row.setBackground(GlassTheme.focusableRow(this, 18));
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(18, GlassTheme.TEXT_PRIMARY, true);
+        title.setGravity(Gravity.START);
+        title.setText(titleRes);
+        TextView subtitleView = text(13, GlassTheme.TEXT_SECONDARY, false);
+        subtitleView.setGravity(Gravity.START);
+        subtitleView.setText(subtitle);
+        texts.addView(title);
+        texts.addView(subtitleView);
+        row.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView chevron = text(20, GlassTheme.TEXT_TERTIARY, false);
+        chevron.setText("›");
+        row.addView(chevron, new LinearLayout.LayoutParams(dp(22), LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        row.setOnClickListener(onClick);
+        return row;
+    }
+
+    /** One selectable row for a connect mode; the PIN row is shown but not yet selectable. */
+    private View settingsOption(String mode, int titleRes, int subtitleRes, String current) {
+        boolean selected = mode.equals(current);
+        boolean comingSoon = MirrorService.MODE_PIN.equals(mode);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setFocusable(true);
+        row.setClickable(true);
+        row.setPadding(dp(20), dp(16), dp(20), dp(16));
+        row.setBackground(selected
+                ? GlassTheme.panelAccent(this, 18, ACCENT)
+                : GlassTheme.panelDim(this, 18));
+        row.setAlpha(comingSoon ? 0.6f : 1f);
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(18, GlassTheme.TEXT_PRIMARY, true);
+        title.setGravity(Gravity.START);
+        title.setText(titleRes);
+        TextView subtitle = text(13, GlassTheme.TEXT_SECONDARY, false);
+        subtitle.setGravity(Gravity.START);
+        subtitle.setText(comingSoon
+                ? getString(subtitleRes) + getString(R.string.settings_coming_soon_suffix)
+                : getString(subtitleRes));
+        texts.addView(title);
+        texts.addView(subtitle);
+        row.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        if (selected) {
+            TextView mark = text(20, Color.WHITE, true);
+            mark.setText("✓");
+            row.addView(mark, new LinearLayout.LayoutParams(dp(28), LinearLayout.LayoutParams.WRAP_CONTENT));
+        }
+
+        row.setOnClickListener(v -> {
+            if (comingSoon) {
+                Toast.makeText(this, R.string.settings_pin_toast, Toast.LENGTH_SHORT).show();
+                return;
+            }
+            if (service != null) {
+                service.setConnectMode(mode);
+                rebuildRightPanel();
+            }
+        });
+        return row;
+    }
+
+    private void showRenameDialog() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(service != null ? service.name() : "");
+        input.setSelectAllOnFocus(true);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(32)});
+        input.setTextColor(GlassTheme.TEXT_PRIMARY);
+        input.setHintTextColor(GlassTheme.TEXT_TERTIARY);
+        input.setBackground(GlassTheme.panelDim(this, 16));
+        input.setPadding(dp(18), dp(12), dp(18), dp(12));
+        int pad = dp(24);
+        FrameLayout box = new FrameLayout(this);
+        box.setPadding(pad, dp(8), pad, 0);
+        box.addView(input);
+        input.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.rename_title)
+                .setMessage(R.string.rename_hint)
+                .setView(box)
+                .setPositiveButton(R.string.save, (d, w) -> applyRename(input.getText().toString()))
+                .setNeutralButton(R.string.reset, (d, w) -> applyRename(null))
+                .setNegativeButton(android.R.string.cancel, null)
+                .create();
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+            dialog.dismiss();
+            return true;
+        });
+        dialog.show();
+    }
+
+    private void applyRename(String rawName) {
+        SharedPreferences.Editor editor = getSharedPreferences("receiver", MODE_PRIVATE).edit();
+        String name = rawName == null ? "" : rawName.replace('.', ' ').trim();
+        if (name.isEmpty()) {
+            editor.remove("name");
+        } else {
+            editor.putString("name", name);
+        }
+        editor.apply();
+        if (service != null) {
+            service.restart();
+        }
+        rebuildRightPanel();
     }
 
     /**
@@ -414,18 +652,14 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         }
     }
 
-    /** A small remote-focusable pill button, styled like Rename/Settings. */
+    /** A small remote-focusable glass pill button, styled like Rename/Settings. */
     private TextView pillButton(int textRes) {
         TextView button = text(18, Color.WHITE, true);
         button.setText(textRes);
         button.setFocusable(true);
         button.setClickable(true);
         button.setPadding(dp(28), dp(12), dp(28), dp(12));
-        StateListDrawable bg = new StateListDrawable();
-        bg.addState(new int[]{android.R.attr.state_focused}, rounded(ACCENT, dp(28), 0, 0));
-        bg.addState(new int[]{android.R.attr.state_pressed}, rounded(ACCENT, dp(28), 0, 0));
-        bg.addState(new int[]{}, rounded(Color.argb(40, 255, 255, 255), dp(28), dp(1), Color.argb(70, 255, 255, 255)));
-        button.setBackground(bg);
+        button.setBackground(GlassTheme.pillButton(this, 28));
         return button;
     }
 
@@ -451,16 +685,6 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         statusDot.setBackground(oval(color));
     }
 
-    private GradientDrawable rounded(int fill, int radius, int strokeWidth, int strokeColor) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(fill);
-        d.setCornerRadius(radius);
-        if (strokeWidth > 0) {
-            d.setStroke(strokeWidth, strokeColor);
-        }
-        return d;
-    }
-
     private GradientDrawable oval(int color) {
         GradientDrawable d = new GradientDrawable();
         d.setShape(GradientDrawable.OVAL);
@@ -480,7 +704,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(dp(40), dp(40));
         badgeLp.rightMargin = dp(18);
         row.addView(badge, badgeLp);
-        TextView label = text(19, Color.rgb(215, 225, 245), false);
+        TextView label = text(19, GlassTheme.TEXT_SECONDARY, false);
         label.setGravity(Gravity.START);
         label.setText(message);
         row.addView(label, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
