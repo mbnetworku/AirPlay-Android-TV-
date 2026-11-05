@@ -2,6 +2,7 @@ package com.airmirror.tv;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -12,11 +13,13 @@ import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.provider.Settings;
 import android.text.InputFilter;
 import android.text.TextUtils;
 import android.util.Log;
@@ -32,6 +35,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -60,6 +64,10 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
     private int rotationDegrees;
     private LinearLayout rightPanel;
     private boolean showingSettings;
+    private String focusKey; // which Settings row to re-focus after the panel is rebuilt
+    private TextView updateButton;
+    private UpdateChecker.Release availableUpdate;
+    private boolean updateBusy;
 
     private static final int AMBER = GlassTheme.AMBER;
     private static final int GREEN = GlassTheme.GREEN;
@@ -109,6 +117,9 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         super.onStart();
         bindService(new Intent(this, MirrorService.class), connection, Context.BIND_AUTO_CREATE);
         settingsButton.requestFocus(); // so OK on the remote opens Settings right away
+        if (UpdateChecker.autoCheckDue(this)) {
+            UpdateChecker.check(this, (release, error) -> showUpdateAvailable(release));
+        }
     }
 
     @Override
@@ -383,6 +394,23 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         addressView.setGravity(Gravity.START);
         left.addView(addressView);
 
+        // Shown only when GitHub has a newer release than the installed app.
+        updateButton = text(16, Color.WHITE, true);
+        updateButton.setFocusable(true);
+        updateButton.setClickable(true);
+        updateButton.setPadding(dp(22), dp(10), dp(22), dp(10));
+        updateButton.setBackground(GlassTheme.pillButton(this, 24));
+        updateButton.setVisibility(View.GONE);
+        updateButton.setOnClickListener(v -> {
+            if (availableUpdate != null) {
+                showUpdateDialog(availableUpdate);
+            }
+        });
+        LinearLayout.LayoutParams updateLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        updateLp.topMargin = dp(14);
+        left.addView(updateButton, updateLp);
+
         panel.addView(left, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         panel.addView(new View(this), new LinearLayout.LayoutParams(dp(64), 1));
 
@@ -392,7 +420,13 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         rightPanel.setOrientation(LinearLayout.VERTICAL);
         rightPanel.setBackground(GlassTheme.panel(this, 32));
         rightPanel.setPadding(dp(36), dp(32), dp(36), dp(32));
-        panel.addView(rightPanel, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        // Settings is taller than the screen on 720p boxes; the remote scrolls it with focus.
+        ScrollView rightScroll = new ScrollView(this);
+        rightScroll.setVerticalScrollBarEnabled(false);
+        rightScroll.setClipToPadding(false);
+        rightScroll.addView(rightPanel, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+        panel.addView(rightScroll, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         rebuildRightPanel();
 
         backdrop.addView(panel, new FrameLayout.LayoutParams(
@@ -417,6 +451,13 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
             buildSettingsPanel(rightPanel);
         } else {
             buildHowToConnectPanel(rightPanel);
+        }
+        if (focusKey != null) {
+            View again = rightPanel.findViewWithTag(focusKey);
+            if (again != null) {
+                again.requestFocus();
+            }
+            focusKey = null;
         }
     }
 
@@ -462,6 +503,238 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         into.addView(space(12));
         into.addView(settingsOption(MirrorService.MODE_NONE,
                 R.string.settings_none_title, R.string.settings_none_subtitle, current));
+        into.addView(space(24));
+
+        // --- Background ---
+        into.addView(sectionLabel(R.string.settings_background_section));
+        into.addView(space(10));
+        boolean bootOn = MirrorService.startOnBoot(this);
+        into.addView(settingsToggle("boot", R.string.settings_boot_title,
+                getString(R.string.settings_boot_subtitle), bootOn, v -> {
+                    MirrorService.setStartOnBoot(this, !bootOn);
+                    focusKey = "boot";
+                    rebuildRightPanel();
+                }));
+        into.addView(space(12));
+        boolean autoOn = MirrorService.openAutomatically(this);
+        boolean allowed = MirrorService.canOpenFromBackground(this);
+        String autoSubtitle = !autoOn
+                ? getString(R.string.settings_auto_open_off)
+                : allowed ? getString(R.string.settings_auto_open_subtitle)
+                : getString(R.string.settings_auto_open_needs_permission);
+        into.addView(settingsToggle("auto_open", R.string.settings_auto_open_title,
+                autoSubtitle, autoOn && allowed, v -> {
+                    focusKey = "auto_open";
+                    if (autoOn && !allowed) {
+                        requestOverlayPermission();
+                        return;
+                    }
+                    MirrorService.setOpenAutomatically(this, !autoOn);
+                    if (!autoOn && !MirrorService.canOpenFromBackground(this)) {
+                        requestOverlayPermission();
+                    }
+                    rebuildRightPanel();
+                }));
+        into.addView(space(24));
+
+        // --- About & updates ---
+        into.addView(sectionLabel(R.string.settings_about_section));
+        into.addView(space(10));
+        String version = UpdateChecker.installedVersion(this);
+        String updateSubtitle = availableUpdate != null
+                ? getString(R.string.update_available_subtitle, availableUpdate.version)
+                : getString(R.string.settings_update_subtitle);
+        View updateRow = settingsRow(R.string.settings_update_title, updateSubtitle, v -> {
+            if (availableUpdate != null) {
+                showUpdateDialog(availableUpdate);
+            } else {
+                checkForUpdatesNow();
+            }
+        });
+        updateRow.setTag("update");
+        into.addView(updateRow);
+        into.addView(space(10));
+        TextView versionLabel = text(13, GlassTheme.TEXT_TERTIARY, false);
+        versionLabel.setGravity(Gravity.START);
+        versionLabel.setText(getString(R.string.settings_version, version));
+        into.addView(versionLabel);
+    }
+
+    private TextView sectionLabel(int textRes) {
+        TextView label = text(13, GlassTheme.TEXT_TERTIARY, false);
+        label.setGravity(Gravity.START);
+        label.setLetterSpacing(0.1f);
+        label.setText(textRes);
+        return label;
+    }
+
+    /** A settings row with an On/Off pill on the right. */
+    private View settingsToggle(String key, int titleRes, String subtitle, boolean on, View.OnClickListener onClick) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setFocusable(true);
+        row.setClickable(true);
+        row.setTag(key);
+        row.setPadding(dp(20), dp(16), dp(20), dp(16));
+        row.setBackground(GlassTheme.focusableRow(this, 18));
+
+        LinearLayout texts = new LinearLayout(this);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(18, GlassTheme.TEXT_PRIMARY, true);
+        title.setGravity(Gravity.START);
+        title.setText(titleRes);
+        TextView subtitleView = text(13, GlassTheme.TEXT_SECONDARY, false);
+        subtitleView.setGravity(Gravity.START);
+        subtitleView.setText(subtitle);
+        texts.addView(title);
+        texts.addView(subtitleView);
+        row.addView(texts, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView pill = text(14, Color.WHITE, true);
+        pill.setText(on ? R.string.on : R.string.off);
+        pill.setPadding(dp(14), dp(6), dp(14), dp(6));
+        GradientDrawable pillBg = new GradientDrawable();
+        pillBg.setCornerRadius(dp(14));
+        pillBg.setColor(on ? GREEN : Color.argb(90, 255, 255, 255));
+        pill.setBackground(pillBg);
+        LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        pillLp.leftMargin = dp(16);
+        row.addView(pill, pillLp);
+
+        row.setOnClickListener(onClick);
+        return row;
+    }
+
+    // --- Auto-open permission (Android 10+) ---
+
+    private void requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return;
+        }
+        try {
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName())));
+            Toast.makeText(this, R.string.overlay_toast, Toast.LENGTH_LONG).show();
+        } catch (ActivityNotFoundException e) {
+            // Many Android TV builds hide this screen; it can still be granted over ADB.
+            LinearLayout box = glassDialogBox(R.string.overlay_missing_title,
+                    getString(R.string.overlay_missing_message, getPackageName()));
+            TextView ok = dialogButton(android.R.string.ok, true);
+            LinearLayout buttons = new LinearLayout(this);
+            buttons.setGravity(Gravity.END);
+            buttons.addView(ok);
+            box.addView(buttons, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+            AlertDialog dialog = glassDialog(box, true);
+            ok.setOnClickListener(v -> dialog.dismiss());
+            dialog.show();
+            ok.requestFocus();
+        }
+    }
+
+    // --- Updates ---
+
+    private void showUpdateAvailable(UpdateChecker.Release release) {
+        if (isFinishing()) {
+            return;
+        }
+        availableUpdate = release;
+        if (release != null) {
+            updateButton.setText(getString(R.string.update_button, release.version));
+            updateButton.setVisibility(View.VISIBLE);
+        } else {
+            updateButton.setVisibility(View.GONE);
+        }
+        if (showingSettings) {
+            rebuildRightPanel();
+        }
+    }
+
+    private void checkForUpdatesNow() {
+        Toast.makeText(this, R.string.update_checking, Toast.LENGTH_SHORT).show();
+        UpdateChecker.check(this, (release, error) -> {
+            if (error != null) {
+                Toast.makeText(this, getString(R.string.update_failed, error), Toast.LENGTH_LONG).show();
+                return;
+            }
+            showUpdateAvailable(release);
+            if (release == null) {
+                Toast.makeText(this, R.string.update_none, Toast.LENGTH_SHORT).show();
+            } else {
+                showUpdateDialog(release);
+            }
+        });
+    }
+
+    private void showUpdateDialog(UpdateChecker.Release release) {
+        String notes = release.notes == null ? "" : release.notes.trim();
+        if (notes.length() > 600) {
+            notes = notes.substring(0, 600) + "…";
+        }
+        String message = getString(R.string.update_message, release.version, UpdateChecker.installedVersion(this))
+                + (notes.isEmpty() ? "" : "\n\n" + notes);
+        LinearLayout box = glassDialogBox(R.string.update_title, message);
+
+        TextView progress = text(16, GlassTheme.TEXT_SECONDARY, false);
+        progress.setGravity(Gravity.START);
+        progress.setVisibility(View.GONE);
+        box.addView(progress);
+        box.addView(space(8));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        TextView later = dialogButton(R.string.update_later, false);
+        TextView now = dialogButton(R.string.update_now, true);
+        buttons.addView(later);
+        buttons.addView(new View(this), new LinearLayout.LayoutParams(dp(16), 1));
+        buttons.addView(now);
+        box.addView(buttons, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        AlertDialog dialog = glassDialog(box, true);
+        later.setOnClickListener(v -> dialog.dismiss());
+        now.setOnClickListener(v -> {
+            if (updateBusy) {
+                return;
+            }
+            if (!UpdateChecker.ensureInstallAllowed(this)) {
+                Toast.makeText(this, R.string.update_allow_install, Toast.LENGTH_LONG).show();
+                return;
+            }
+            updateBusy = true;
+            now.setEnabled(false);
+            now.setAlpha(0.5f);
+            progress.setVisibility(View.VISIBLE);
+            progress.setText(getString(R.string.update_downloading, 0));
+            UpdateChecker.download(this, release, new UpdateChecker.DownloadCallback() {
+                @Override
+                public void onProgress(int percent) {
+                    progress.setText(getString(R.string.update_downloading, percent));
+                }
+
+                @Override
+                public void onDone(java.io.File apk, String error) {
+                    updateBusy = false;
+                    now.setEnabled(true);
+                    now.setAlpha(1f);
+                    if (apk == null) {
+                        progress.setText(getString(R.string.update_failed, error));
+                        return;
+                    }
+                    dialog.dismiss();
+                    try {
+                        UpdateChecker.install(MainActivity.this, apk);
+                    } catch (ActivityNotFoundException e) {
+                        Toast.makeText(MainActivity.this, R.string.update_no_installer, Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
+        });
+        dialog.show();
+        now.requestFocus();
     }
 
     private View settingsRow(int titleRes, String subtitle, View.OnClickListener onClick) {
@@ -529,7 +802,9 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
             row.addView(mark, new LinearLayout.LayoutParams(dp(28), LinearLayout.LayoutParams.WRAP_CONTENT));
         }
 
+        row.setTag("mode_" + mode);
         row.setOnClickListener(v -> {
+            focusKey = "mode_" + mode;
             if (comingSoon) {
                 Toast.makeText(this, R.string.settings_pin_toast, Toast.LENGTH_SHORT).show();
                 return;
