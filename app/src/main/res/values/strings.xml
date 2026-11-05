@@ -65,4 +65,8 @@
     <string name="update_downloading">Downloading… %1$d%%</string>
     <string name="update_allow_install">Allow AirMirror TV to install apps, then press Update now again.</string>
     <string name="update_no_installer">This TV has no app installer. Download the APK from the Releases page instead.</string>
+    <string name="update_button_ready">⬆  Install %1$s</string>
+    <string name="update_ready_message">Version %1$s is downloaded and ready. You have %2$s.</string>
+    <string name="update_ready_title">AirMirror TV %1$s is ready to install</string>
+    <string name="update_ready_text">Open the app and press Install. It takes a few seconds.</string>
 </resources>

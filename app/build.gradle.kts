@@ -4,7 +4,7 @@ plugins {
 
 // The app version: change only this line to release an update. Pushing it to main makes
 // GitHub Actions publish a "v<version>" release, and installed apps then offer the update.
-val appVersion = "1.18"
+val appVersion = "1.19"
 
 // versionCode must grow with every release; derive it from the version so it can't be forgotten
 // (1.18 -> 1018, 2.0 -> 2000).

@@ -117,6 +117,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         super.onStart();
         bindService(new Intent(this, MirrorService.class), connection, Context.BIND_AUTO_CREATE);
         settingsButton.requestFocus(); // so OK on the remote opens Settings right away
+        showUpdateAvailable(UpdateChecker.knownRelease(this)); // instant, from the last check
         if (UpdateChecker.autoCheckDue(this)) {
             UpdateChecker.check(this, (release, error) -> showUpdateAvailable(release));
         }
@@ -642,7 +643,9 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         }
         availableUpdate = release;
         if (release != null) {
-            updateButton.setText(getString(R.string.update_button, release.version));
+            boolean ready = UpdateChecker.readyApk(this, release) != null;
+            updateButton.setText(getString(ready ? R.string.update_button_ready : R.string.update_button,
+                    release.version));
             updateButton.setVisibility(View.VISIBLE);
         } else {
             updateButton.setVisibility(View.GONE);
@@ -673,7 +676,9 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         if (notes.length() > 600) {
             notes = notes.substring(0, 600) + "…";
         }
-        String message = getString(R.string.update_message, release.version, UpdateChecker.installedVersion(this))
+        boolean ready = UpdateChecker.readyApk(this, release) != null;
+        String message = getString(ready ? R.string.update_ready_message : R.string.update_message,
+                release.version, UpdateChecker.installedVersion(this))
                 + (notes.isEmpty() ? "" : "\n\n" + notes);
         LinearLayout box = glassDialogBox(R.string.update_title, message);
 
