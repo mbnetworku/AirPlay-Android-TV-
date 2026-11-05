@@ -8,7 +8,6 @@
     <string name="status_error">Could not start: %1$s</string>
     <string name="status_address">TV box address: %1$s</string>
     <string name="name_label">CHOOSE THIS NAME ON YOUR IPHONE</string>
-    <string name="rename">✎  Rename</string>
     <string name="rename_title">Rename this receiver</string>
     <string name="rename_hint">This is the name your iPhone shows under Screen Mirroring.</string>
     <string name="save">Save</string>
@@ -21,6 +20,8 @@
     <string name="approval_allow">Allow</string>
     <string name="approval_deny">Deny</string>
     <string name="settings">Settings</string>
+    <string name="settings_done">Done</string>
+    <string name="rename_input_hint">Living Room</string>
     <string name="settings_title">Settings</string>
     <string name="settings_rename_subtitle">Currently: %1$s</string>
     <string name="settings_connect_section">WHO CAN CONNECT</string>
