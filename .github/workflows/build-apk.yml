@@ -67,9 +67,25 @@ jobs:
             echo "::warning::No AIRMIRROR_KEYSTORE_BASE64 / AIRMIRROR_KEYSTORE_PASSWORD secrets: signing with a throwaway debug key, so in-app updates won't install over this build. Run tools/create-signing-key.bat once and add the two secrets."
             exit 0
           fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/airmirror.keystore"
-          echo "AIRMIRROR_KEYSTORE=$RUNNER_TEMP/airmirror.keystore" >> "$GITHUB_ENV"
-          echo "AIRMIRROR_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          # Pasting into the secrets page easily adds a trailing line break or space; drop it.
+          PASSWORD=$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+          echo "::add-mask::$PASSWORD"
+          KEYSTORE="$RUNNER_TEMP/airmirror.keystore"
+          if ! printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n\t ' | base64 --decode > "$KEYSTORE" 2>/dev/null; then
+            echo "::error::AIRMIRROR_KEYSTORE_BASE64 is not valid base64. Paste the whole text from airmirror-signing-base64.txt (made by tools/create-signing-key.bat)."
+            exit 1
+          fi
+          if ! keytool -list -keystore "$KEYSTORE" -storepass "$PASSWORD" >/dev/null 2>&1; then
+            echo "::error::AIRMIRROR_KEYSTORE_PASSWORD does not open the key in AIRMIRROR_KEYSTORE_BASE64. Update the password secret to the exact password chosen in tools/create-signing-key.bat (or recreate both secrets from the same run)."
+            exit 1
+          fi
+          if ! keytool -list -keystore "$KEYSTORE" -storepass "$PASSWORD" -alias airmirror >/dev/null 2>&1; then
+            echo "::error::The key in AIRMIRROR_KEYSTORE_BASE64 has no entry named 'airmirror'. Create it with tools/create-signing-key.bat."
+            exit 1
+          fi
+          echo "Signing key OK."
+          echo "AIRMIRROR_KEYSTORE=$KEYSTORE" >> "$GITHUB_ENV"
+          echo "AIRMIRROR_KEYSTORE_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
 
       - name: Build release APK
         run: gradle assembleRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease

@@ -82,6 +82,17 @@ final class UpdateChecker {
         }
     }
 
+    /** The newer release found by the last check (by the app or in the background), or null. */
+    static Release knownRelease(Context ctx) {
+        SharedPreferences prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String version = prefs.getString("latest_version", null);
+        String url = prefs.getString("latest_url", null);
+        if (version == null || url == null || compareVersions(version, installedVersion(ctx)) <= 0) {
+            return null;
+        }
+        return new Release(version, url, prefs.getString("latest_notes", ""));
+    }
+
     /** True when an automatic check is due (the screen opened and the last check is old enough). */
     static boolean autoCheckDue(Context ctx) {
         long last = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong("last_check", 0);
@@ -110,10 +121,18 @@ final class UpdateChecker {
                     }
                 }
                 SharedPreferences.Editor prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
-                prefs.putLong("last_check", System.currentTimeMillis()).apply();
+                prefs.putLong("last_check", System.currentTimeMillis());
                 if (apkUrl != null && compareVersions(version, installed) > 0) {
                     result = new Release(version, apkUrl, json.optString("body", ""));
+                    // Remembered so the screen shows the Update button at once, even when the
+                    // background service was the one that found it.
+                    prefs.putString("latest_version", version)
+                            .putString("latest_url", apkUrl)
+                            .putString("latest_notes", result.notes);
+                } else {
+                    prefs.remove("latest_version").remove("latest_url").remove("latest_notes");
                 }
+                prefs.apply();
             } catch (Exception e) {
                 Log.w(TAG, "Update check failed", e);
                 error = e.getMessage() != null ? e.getMessage() : e.toString();
@@ -124,12 +143,53 @@ final class UpdateChecker {
         });
     }
 
+    private static File apkFile(Context app) {
+        return new File(new File(app.getCacheDir(), "update"), "AirMirrorTV.apk");
+    }
+
+    /**
+     * The APK for {@code release} if it was already downloaded (e.g. in the background by
+     * {@link MirrorService}), so pressing Update installs it at once. Null otherwise.
+     */
+    static File readyApk(Context ctx, Release release) {
+        Context app = ctx.getApplicationContext();
+        SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        File apk = apkFile(app);
+        if (release != null && release.version.equals(prefs.getString("ready_version", null))
+                && apk.length() > 0 && apk.length() == prefs.getLong("ready_size", -1)) {
+            return apk;
+        }
+        return null;
+    }
+
+    /** Deletes a downloaded APK once that version (or newer) is installed. */
+    static void cleanUp(Context ctx) {
+        Context app = ctx.getApplicationContext();
+        SharedPreferences prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String ready = prefs.getString("ready_version", null);
+        if (ready != null && compareVersions(ready, installedVersion(app)) <= 0) {
+            //noinspection ResultOfMethodCallIgnored
+            apkFile(app).delete();
+            prefs.edit().remove("ready_version").remove("ready_size").apply();
+        }
+    }
+
     static void download(Context ctx, Release release, DownloadCallback callback) {
         Context app = ctx.getApplicationContext();
+        File ready = readyApk(app, release);
+        if (ready != null) {
+            if (callback != null) {
+                MAIN.post(() -> callback.onDone(ready, null));
+            }
+            return;
+        }
         EXECUTOR.execute(() -> {
-            File dir = new File(app.getCacheDir(), "update");
-            File apk = new File(dir, "AirMirrorTV.apk");
+            File apk = apkFile(app);
+            File dir = apk.getParentFile();
             String error = null;
+            // Not "ready" until this download completes.
+            app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .remove("ready_version").remove("ready_size").apply();
             HttpURLConnection conn = null;
             try {
                 //noinspection ResultOfMethodCallIgnored
@@ -144,6 +204,9 @@ final class UpdateChecker {
                     while ((n = in.read(buf)) > 0) {
                         out.write(buf, 0, n);
                         done += n;
+                        if (callback == null) {
+                            continue; // background download: no progress to show
+                        }
                         if (total > 0) {
                             int percent = (int) (done * 100 / total);
                             if (percent != lastPercent) {
@@ -153,6 +216,13 @@ final class UpdateChecker {
                         }
                     }
                 }
+                if (total > 0 && apk.length() != total) {
+                    throw new java.io.IOException("Download incomplete");
+                }
+                app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                        .putString("ready_version", release.version)
+                        .putLong("ready_size", apk.length())
+                        .apply();
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
                     // Before 7.0 the installer reads the file directly, so it must be readable
                     // by other apps (there is no content:// sharing for installs yet).
@@ -172,7 +242,9 @@ final class UpdateChecker {
                 }
             }
             String err = error;
-            MAIN.post(() -> callback.onDone(err == null ? apk : null, err));
+            if (callback != null) {
+                MAIN.post(() -> callback.onDone(err == null ? apk : null, err));
+            }
         });
     }
 

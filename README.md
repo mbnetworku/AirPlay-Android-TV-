@@ -186,7 +186,7 @@ adb install -r AirMirrorTV.apk
 
 <br>
 
-From version 1.18, the app updates itself: when a new version is out, an **⬆ Update** button appears on the home screen (and in **Settings → Check for updates**). Press it, then confirm the install.
+From version 1.18, the app updates itself. It checks once a day in the background (never while you're mirroring) and downloads a new version quietly. When it's ready, an **⬆ Install** button appears on the home screen (and in **Settings → Check for updates**). Press it, then confirm the install. Android always asks for that confirmation.
 
 The first time, Android may ask you to allow AirMirror TV to **install unknown apps**. Allow it and press **Update now** again.
 
@@ -387,7 +387,8 @@ iPhone ──mDNS──▶ discovery ──▶ pairing ──▶ FairPlay handsh
 
 | Version | What's new |
 |:---:|---|
-| **1.18** | 🚀 Opens automatically when AirPlay starts · 🔌 Starts with the TV · ⬆️ In-app updates from GitHub · 🪶 Fewer background threads; restarts only when the network changes instead of polling · 🛠️ Fixed the iPhone sometimes losing the TV after a Rename · ⚙️ New Background and About & updates settings |
+| **1.19** | ⬆️ Updates download quietly in the background (checked once a day, never while mirroring), so **Install** is instant · 🔔 "Update ready" notification · 🔐 Signing secrets are trimmed and checked before building |
+| 1.18 | 🚀 Opens automatically when AirPlay starts · 🔌 Starts with the TV · ⬆️ In-app updates from GitHub · 🪶 Fewer background threads; restarts only when the network changes instead of polling · 🛠️ Fixed the iPhone sometimes losing the TV after a Rename · ⚙️ New Background and About & updates settings |
 | 1.17 | 🧊 Rename popup redesigned in the glass style · ⬅️ **Back** closes Settings instead of leaving the app · ✅ Settings button shows **Done** while open · 📖 New README with download buttons · 🤖 Automatic APK builds |
 | 1.16 | Liquid Glass redesign; Settings merged into the home screen |
 | 1.11 | Fixed audio going silent after one dropped network packet |

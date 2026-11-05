@@ -84,6 +84,11 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     private List<String> runningAddresses = Collections.emptyList();
     private BroadcastReceiver networkReceiver;
     private final Runnable networkCheck = this::onNetworkMaybeChanged;
+    private final Runnable backgroundUpdate = this::backgroundUpdateCheck;
+    private volatile boolean mirroring;
+    private static final long FIRST_UPDATE_CHECK_MS = 2 * 60 * 1000L;   // let the TV finish booting
+    private static final long UPDATE_CHECK_EVERY_MS = 24 * 60 * 60 * 1000L;
+    private static final int UPDATE_NOTIFICATION_ID = 2;
 
     // One pending approval at a time; AirPlay only has one active sender anyway.
     private String pendingApprovalName;
@@ -103,6 +108,8 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
         startForeground(1, buildNotification(getString(R.string.status_starting)));
         startReceiver();
         watchNetwork();
+        UpdateChecker.cleanUp(this);
+        mainHandler.postDelayed(backgroundUpdate, FIRST_UPDATE_CHECK_MS);
     }
 
     @Override
@@ -222,6 +229,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
 
     @Override
     public void onMirroringStarted() {
+        mirroring = true;
         bringAppToFront();
         mainHandler.post(() -> {
             updateNotification();
@@ -233,6 +241,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
 
     @Override
     public void onMirroringStopped() {
+        mirroring = false;
         mainHandler.post(() -> {
             updateNotification();
             if (ui != null) {
@@ -410,6 +419,55 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     }
 
     // --- Notification ---
+
+    // --- Background updates: check once a day, download quietly, install on one press ---
+
+    private void backgroundUpdateCheck() {
+        mainHandler.removeCallbacks(backgroundUpdate);
+        mainHandler.postDelayed(backgroundUpdate, UPDATE_CHECK_EVERY_MS);
+        if (mirroring) {
+            // Never compete with a picture for Wi-Fi; try again in an hour.
+            mainHandler.removeCallbacks(backgroundUpdate);
+            mainHandler.postDelayed(backgroundUpdate, 60 * 60 * 1000L);
+            return;
+        }
+        UpdateChecker.check(this, (release, error) -> {
+            if (release == null) {
+                return;
+            }
+            UpdateChecker.download(this, release, null);
+            // Download runs on the updater's own thread; tell the user once it's there.
+            mainHandler.postDelayed(() -> notifyUpdateReady(release, 20), 5000);
+        });
+    }
+
+    private void notifyUpdateReady(UpdateChecker.Release release, int triesLeft) {
+        if (UpdateChecker.readyApk(this, release) == null) {
+            // Still downloading on slow Wi-Fi: look again every 30 s for up to 10 minutes. If the
+            // download failed, tomorrow's check retries it, and the Update button still works.
+            if (triesLeft > 0) {
+                mainHandler.postDelayed(() -> notifyUpdateReady(release, triesLeft - 1), 30000);
+            }
+            return;
+        }
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (nm == null) {
+            return;
+        }
+        Intent openIntent = new Intent(this, MainActivity.class);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT
+                | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                ? new Notification.Builder(this, CHANNEL_ID)
+                : new Notification.Builder(this);
+        nm.notify(UPDATE_NOTIFICATION_ID, builder
+                .setContentTitle(getString(R.string.update_ready_title, release.version))
+                .setContentText(getString(R.string.update_ready_text))
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setContentIntent(PendingIntent.getActivity(this, 1, openIntent, flags))
+                .setAutoCancel(true)
+                .build());
+    }
 
     private void updateNotification() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
