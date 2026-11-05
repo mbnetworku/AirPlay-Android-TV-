@@ -169,53 +169,21 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
             approvalDialog.dismiss();
         }
 
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackground(GlassTheme.panel(this, 32));
-        box.setPadding(dp(40), dp(36), dp(40), dp(32));
-
-        TextView title = text(24, GlassTheme.TEXT_PRIMARY, true);
-        title.setGravity(Gravity.START);
-        title.setText(R.string.approval_title);
-        box.addView(title);
-        box.addView(space(12));
-
-        TextView message = text(17, GlassTheme.TEXT_SECONDARY, false);
-        message.setGravity(Gravity.START);
-        message.setText(getString(R.string.approval_message, deviceName));
-        box.addView(message);
-        box.addView(space(28));
+        LinearLayout box = glassDialogBox(R.string.approval_title,
+                getString(R.string.approval_message, deviceName));
+        box.addView(space(4));
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setGravity(Gravity.END);
-
-        TextView deny = text(17, Color.WHITE, true);
-        deny.setText(R.string.approval_deny);
-        deny.setFocusable(true);
-        deny.setClickable(true);
-        deny.setPadding(dp(28), dp(12), dp(28), dp(12));
-        deny.setBackground(GlassTheme.pillButton(this, 24));
+        TextView deny = dialogButton(R.string.approval_deny, false);
+        TextView allow = dialogButton(R.string.approval_allow, true);
         buttons.addView(deny);
-
-        View gap = new View(this);
-        buttons.addView(gap, new LinearLayout.LayoutParams(dp(16), 1));
-
-        TextView allow = text(17, Color.WHITE, true);
-        allow.setText(R.string.approval_allow);
-        allow.setFocusable(true);
-        allow.setClickable(true);
-        allow.setPadding(dp(28), dp(12), dp(28), dp(12));
-        allow.setBackground(GlassTheme.panelAccent(this, 24, ACCENT));
+        buttons.addView(new View(this), new LinearLayout.LayoutParams(dp(16), 1));
         buttons.addView(allow);
-
         box.addView(buttons);
 
-        approvalDialog = new AlertDialog.Builder(this)
-                .setView(box)
-                .setCancelable(false)
-                .create();
-        approvalDialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        approvalDialog = glassDialog(box, false);
         deny.setOnClickListener(v -> {
             approvalDialog.dismiss();
             if (service != null) {
@@ -276,6 +244,18 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
             }
         }
         return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public void onBackPressed() {
+        // With Settings open, Back returns to the home panel instead of leaving the app.
+        if (showingSettings && overlay.getVisibility() == View.VISIBLE) {
+            showingSettings = false;
+            rebuildRightPanel();
+            settingsButton.requestFocus();
+            return;
+        }
+        super.onBackPressed();
     }
 
     private void rotate(int deltaDegrees) {
@@ -430,6 +410,9 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
             return;
         }
         rightPanel.removeAllViews();
+        if (settingsButton instanceof TextView) {
+            ((TextView) settingsButton).setText(showingSettings ? R.string.settings_done : R.string.settings);
+        }
         if (showingSettings) {
             buildSettingsPanel(rightPanel);
         } else {
@@ -560,34 +543,100 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
     }
 
     private void showRenameDialog() {
+        LinearLayout box = glassDialogBox(R.string.rename_title, getString(R.string.rename_hint));
+
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setText(service != null ? service.name() : "");
         input.setSelectAllOnFocus(true);
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(32)});
+        input.setTextSize(22);
         input.setTextColor(GlassTheme.TEXT_PRIMARY);
         input.setHintTextColor(GlassTheme.TEXT_TERTIARY);
-        input.setBackground(GlassTheme.panelDim(this, 16));
-        input.setPadding(dp(18), dp(12), dp(18), dp(12));
-        int pad = dp(24);
-        FrameLayout box = new FrameLayout(this);
-        box.setPadding(pad, dp(8), pad, 0);
-        box.addView(input);
+        input.setHint(R.string.rename_input_hint);
+        input.setBackground(GlassTheme.focusableRow(this, 16));
+        input.setPadding(dp(20), dp(14), dp(20), dp(14));
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle(R.string.rename_title)
-                .setMessage(R.string.rename_hint)
-                .setView(box)
-                .setPositiveButton(R.string.save, (d, w) -> applyRename(input.getText().toString()))
-                .setNeutralButton(R.string.reset, (d, w) -> applyRename(null))
-                .setNegativeButton(android.R.string.cancel, null)
-                .create();
-        input.setOnEditorActionListener((v, actionId, event) -> {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
+        box.addView(input, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        box.addView(space(28));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        TextView reset = dialogButton(R.string.reset, false);
+        TextView cancel = dialogButton(android.R.string.cancel, false);
+        TextView save = dialogButton(R.string.save, true);
+        buttons.addView(reset);
+        buttons.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        buttons.addView(cancel);
+        buttons.addView(new View(this), new LinearLayout.LayoutParams(dp(16), 1));
+        buttons.addView(save);
+        box.addView(buttons, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        AlertDialog dialog = glassDialog(box, true);
+        reset.setOnClickListener(v -> {
             dialog.dismiss();
+            applyRename(null);
+        });
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        save.setOnClickListener(v -> {
+            dialog.dismiss();
+            applyRename(input.getText().toString());
+        });
+        input.setOnEditorActionListener((v, actionId, event) -> {
+            save.performClick();
             return true;
         });
         dialog.show();
+        input.requestFocus();
+    }
+
+    /** The shared glass card used by every popup: a title and a short message. */
+    private LinearLayout glassDialogBox(int titleRes, String messageText) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackground(GlassTheme.panel(this, 32));
+        box.setPadding(dp(40), dp(36), dp(40), dp(32));
+        box.setMinimumWidth(dp(520));
+
+        TextView title = text(24, GlassTheme.TEXT_PRIMARY, true);
+        title.setGravity(Gravity.START);
+        title.setText(titleRes);
+        box.addView(title);
+        box.addView(space(12));
+
+        TextView message = text(17, GlassTheme.TEXT_SECONDARY, false);
+        message.setGravity(Gravity.START);
+        message.setText(messageText);
+        box.addView(message);
+        box.addView(space(24));
+        return box;
+    }
+
+    /** Wraps a glass card in a dialog window with no stock grey frame behind it. */
+    private AlertDialog glassDialog(View content, boolean cancelable) {
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(content)
+                .setCancelable(cancelable)
+                .create();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+        }
+        return dialog;
+    }
+
+    private TextView dialogButton(int textRes, boolean primary) {
+        TextView button = text(17, Color.WHITE, true);
+        button.setText(textRes);
+        button.setFocusable(true);
+        button.setClickable(true);
+        button.setPadding(dp(28), dp(12), dp(28), dp(12));
+        button.setBackground(primary
+                ? GlassTheme.panelAccent(this, 24, ACCENT)
+                : GlassTheme.pillButton(this, 24));
+        return button;
     }
 
     private void applyRename(String rawName) {
