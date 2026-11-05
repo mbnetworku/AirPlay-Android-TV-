@@ -33,6 +33,15 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      # gradle.properties points Java at the Windows certificate store (Windows-ROOT), which
+      # exists only on Windows. Drop it on this Linux runner so Gradle can download over HTTPS;
+      # local Windows builds keep using the file as it is.
+      - name: Use the Linux certificate store
+        run: |
+          sed -i 's/ *-Djavax.net.ssl.trustStoreType=Windows-ROOT//' gradle.properties
+          sed -i '/^systemProp.javax.net.ssl.trustStoreType=Windows-ROOT$/d' gradle.properties
+          cat gradle.properties
+
       - name: Build release APK
         run: gradle assembleRelease -x lintVitalAnalyzeRelease -x lintVitalReportRelease -x lintVitalRelease
 
