@@ -11,8 +11,8 @@ No app to install on the Apple device. No account. No Google services.
 
 <br>
 
-<a href="https://github.com/mbnetworku/AirPlay-Android-TV-/raw/main/AirMirrorTV.apk">
-  <img src="https://img.shields.io/badge/⬇_Download_APK-v1.17-0A84FF?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="48">
+<a href="https://github.com/mbnetworku/AirPlay-Android-TV-/releases/latest/download/AirMirrorTV.apk">
+  <img src="https://img.shields.io/badge/⬇_Download_APK-latest-0A84FF?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="48">
 </a>
 &nbsp;
 <a href="https://github.com/mbnetworku/AirPlay-Android-TV-/releases/latest">
@@ -33,7 +33,7 @@ No app to install on the Apple device. No account. No Google services.
 
 <br><br>
 
-![Version](https://img.shields.io/badge/version-1.17-0A84FF)
+[![Latest release](https://img.shields.io/github/v/release/mbnetworku/AirPlay-Android-TV-?label=latest&color=0A84FF)](https://github.com/mbnetworku/AirPlay-Android-TV-/releases/latest)
 ![Android](https://img.shields.io/badge/Android-5.0%2B-3DDC84?logo=android&logoColor=white)
 ![Android TV](https://img.shields.io/badge/Android_TV-ready-3DDC84?logo=androidtv&logoColor=white)
 ![AirPlay](https://img.shields.io/badge/AirPlay-Mirror_·_Video_·_Audio-000000?logo=apple&logoColor=white)
@@ -96,8 +96,8 @@ Translucent glass panels over your wallpaper, built for the remote's D-pad, read
 </td>
 <td valign="top">
 
-### 🔄 Always ready
-The receiver keeps running in the background and jumps to the front as soon as your iPhone connects.
+### 🔄 Always ready, opens by itself
+Starts with the TV and waits quietly in the background. When you start AirPlay, the app opens on its own.
 
 </td>
 </tr>
@@ -106,6 +106,20 @@ The receiver keeps running in the background and jumps to the front as soon as y
 
 ### ✏️ Rename
 Give the TV a friendly name like *Living Room*. That's what your iPhone shows.
+
+</td>
+<td valign="top">
+
+### ⬆️ Updates itself
+Checks this page for new versions and shows an **Update** button. One press downloads and installs it.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🪶 Light on resources
+Nothing runs while idle except a small network listener. No polling, a capped number of threads, decoding only while you watch.
 
 </td>
 <td valign="top">
@@ -130,7 +144,7 @@ Android 5.0 (Lollipop) and newer. One small APK, no Google Play services needed.
 <tr>
 <td valign="top">
 
-Click **[⬇ Download APK](https://github.com/mbnetworku/AirPlay-Android-TV-/raw/main/AirMirrorTV.apk)**.
+Click **[⬇ Download APK](https://github.com/mbnetworku/AirPlay-Android-TV-/releases/latest/download/AirMirrorTV.apk)**.
 
 </td>
 <td valign="top">
@@ -172,13 +186,17 @@ adb install -r AirMirrorTV.apk
 
 <br>
 
-Install the new APK over the old one. Your receiver name and settings are kept.
+From version 1.18, the app updates itself: when a new version is out, an **⬆ Update** button appears on the home screen (and in **Settings → Check for updates**). Press it, then confirm the install.
+
+The first time, Android may ask you to allow AirMirror TV to **install unknown apps**. Allow it and press **Update now** again.
+
+> [!IMPORTANT]
+> Version 1.18 is the first one signed with the permanent release key. If you have **1.17 or older**, uninstall it once and install 1.18. All later updates install over it, keeping your settings.
 
 </details>
 
 > [!TIP]
-> The **⬇ Download APK** button always gives the APK stored in this repository.
-> The **📦 Latest Release** button gives the APK built automatically by GitHub Actions for each tagged version.
+> The **⬇ Download APK** button always gives the newest release.
 
 ---
 
@@ -220,6 +238,21 @@ Settings opens right on the home screen, in the right-hand panel. Select **Done*
 | ✅ **Ask on the TV** *(default)* | A new device shows an **Allow / Deny** prompt on the TV first. |
 | 🔢 **Require a PIN** | *Coming soon.* Works like *Ask on the TV* for now. |
 | 🌐 **Anyone can connect** | No prompt. Every device on the network connects straight away. |
+| 🔌 **Start when the TV turns on** *(on)* | Starts the receiver in the background at power-on, so the iPhone always finds the TV. |
+| 🚀 **Open automatically** *(on)* | Brings the app to the front when you start AirPlay. On Android 10+ this needs **Display over other apps** (see below). |
+| ⬆️ **Check for updates** | Looks for a newer version on GitHub and installs it. |
+
+### 🚀 Making "Open automatically" work on Android 10 and newer
+
+Android 10+ only lets an app open itself if it may **display over other apps**. In Settings, select **Open automatically** and allow it on the screen that opens.
+
+Some TVs hide that screen. Then run this once from a computer with ADB:
+
+```bash
+adb shell appops set com.airmirror.tv SYSTEM_ALERT_WINDOW allow
+```
+
+Android 5–9 needs nothing extra.
 
 ---
 
@@ -231,6 +264,22 @@ Settings opens right on the home screen, in the right-hand panel. Select **Done*
 - Make sure both devices are on the **same Wi‑Fi** (not a guest network).
 - Turn off **client isolation / AP isolation** on your router.
 - Open the app on the TV once after installing.
+
+</details>
+
+<details>
+<summary><b>The app doesn't open by itself when I start AirPlay</b></summary>
+
+- In **Settings**, check that **Open automatically** shows **On**.
+- On Android 10+, allow **Display over other apps** ([how](#-making-open-automatically-work-on-android-10-and-newer)).
+- Some TV brands also have their own "auto-start" or "background apps" setting. Allow AirMirror TV there too.
+
+</details>
+
+<details>
+<summary><b>Update says "App not installed"</b></summary>
+
+You're updating from version 1.17 or older, which used a different signing key. Uninstall AirMirror TV once, then install the newest APK.
 
 </details>
 
@@ -274,7 +323,30 @@ adb logcat -d > airmirror-log.txt
 
 ## 🛠️ Build from source
 
-**Automatic:** every push to `main` builds the APK with GitHub Actions. Download it from the run's **Artifacts** on the [Actions page](https://github.com/mbnetworku/AirPlay-Android-TV-/actions/workflows/build-apk.yml). Pushing a tag such as `v1.17` also publishes a [Release](https://github.com/mbnetworku/AirPlay-Android-TV-/releases) with the APK attached.
+**Automatic:** every push to `main` builds the APK with GitHub Actions ([Actions page](https://github.com/mbnetworku/AirPlay-Android-TV-/actions/workflows/build-apk.yml)).
+
+### 🚢 Publishing an update
+
+1. In `app/build.gradle.kts`, change one line, for example `val appVersion = "1.19"`.
+2. Push to `main` (or merge a pull request).
+
+GitHub Actions builds the APK and publishes **Release v1.19** with it attached. Every installed app then shows the **⬆ Update** button the next time it's opened. If you push without changing the version, nothing is released.
+
+### 🔑 One-time setup: the signing key
+
+Android only installs an update over an app signed with the **same private key**. The key is kept out of the repository, in GitHub Secrets, and releases are published only when it's there.
+
+1. On a Windows PC with Android Studio or a JDK installed, double-click **[`tools/create-signing-key.bat`](tools/create-signing-key.bat)**.
+2. Choose a password. The tool creates the key in `%USERPROFILE%\AirMirrorTV-signing\`, copies its text to your clipboard, and opens GitHub's **New secret** page.
+3. Add two **repository secrets**:
+   - `AIRMIRROR_KEYSTORE_BASE64`: paste with Ctrl+V
+   - `AIRMIRROR_KEYSTORE_PASSWORD`: your password
+4. On GitHub, open **Actions → Build APK → Run workflow** on `main`. This publishes the release for the current version.
+
+> [!CAUTION]
+> Back up the `AirMirrorTV-signing` folder and never share or commit it. If it's lost, every TV has to uninstall and reinstall the app once.
+
+To sign a local build with the same key, set the `AIRMIRROR_KEYSTORE` (file path) and `AIRMIRROR_KEYSTORE_PASSWORD` environment variables before running Gradle.
 
 **Manual:** needs **JDK 17**, **Android SDK 34** and **Gradle 8.7+**.
 
@@ -302,6 +374,8 @@ iPhone ──mDNS──▶ discovery ──▶ pairing ──▶ FairPlay handsh
 | `app/.../MirrorService.java` | Background service: runs the receiver, the Allow/Deny flow and the notification |
 | `app/.../MainActivity.java` | Home screen, Settings panel, popups and the video surface |
 | `app/.../GlassTheme.java` | Shared Liquid Glass colours, panels and buttons |
+| `app/.../UpdateChecker.java`, `ApkProvider.java` | In-app updates from GitHub Releases |
+| `app/.../BootReceiver.java` | Starts the receiver when the TV turns on |
 | `app/.../MirrorPlayback.java` | Routes mirroring, casting and audio to the decoders |
 | `app/.../VideoDecoder.java` · `AudioDecoder.java` · `AlacDecoder.java` | Hardware video, AAC and pure-Java ALAC decoding |
 
@@ -313,7 +387,8 @@ iPhone ──mDNS──▶ discovery ──▶ pairing ──▶ FairPlay handsh
 
 | Version | What's new |
 |:---:|---|
-| **1.17** | 🧊 Rename popup redesigned in the glass style · ⬅️ **Back** closes Settings instead of leaving the app · ✅ Settings button shows **Done** while open · 📖 New README with download buttons · 🤖 Automatic APK builds |
+| **1.18** | 🚀 Opens automatically when AirPlay starts · 🔌 Starts with the TV · ⬆️ In-app updates from GitHub · 🪶 Fewer background threads; restarts only when the network changes instead of polling · 🛠️ Fixed the iPhone sometimes losing the TV after a Rename · ⚙️ New Background and About & updates settings |
+| 1.17 | 🧊 Rename popup redesigned in the glass style · ⬅️ **Back** closes Settings instead of leaving the app · ✅ Settings button shows **Done** while open · 📖 New README with download buttons · 🤖 Automatic APK builds |
 | 1.16 | Liquid Glass redesign; Settings merged into the home screen |
 | 1.11 | Fixed audio going silent after one dropped network packet |
 | 1.10 | Fixed a video-casting leak that froze mirroring later (e.g. on YouTube ads) |
@@ -331,7 +406,7 @@ The `airplay/` module is derived from serezhka/java-airplay (MIT); see [`airplay
 
 <br>
 
-<a href="https://github.com/mbnetworku/AirPlay-Android-TV-/raw/main/AirMirrorTV.apk">
+<a href="https://github.com/mbnetworku/AirPlay-Android-TV-/releases/latest/download/AirMirrorTV.apk">
   <img src="https://img.shields.io/badge/⬇_Download_AirMirror_TV-0A84FF?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="40">
 </a>
 

@@ -5,15 +5,19 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.net.ConnectivityManager;
 import android.net.wifi.WifiManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 
 import com.github.serezhka.airplay.protocol.pairing.PairingIdentity;
@@ -77,6 +81,9 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     private AirPlayServer server;
     private WifiManager.MulticastLock multicastLock;
     private volatile UiCallback ui;
+    private List<String> runningAddresses = Collections.emptyList();
+    private BroadcastReceiver networkReceiver;
+    private final Runnable networkCheck = this::onNetworkMaybeChanged;
 
     // One pending approval at a time; AirPlay only has one active sender anyway.
     private String pendingApprovalName;
@@ -95,6 +102,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
         MdnsAdvertiser.deviceIdOverride = deviceId();
         startForeground(1, buildNotification(getString(R.string.status_starting)));
         startReceiver();
+        watchNetwork();
     }
 
     @Override
@@ -110,6 +118,11 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     @Override
     public void onDestroy() {
         super.onDestroy();
+        if (networkReceiver != null) {
+            unregisterReceiver(networkReceiver);
+            networkReceiver = null;
+        }
+        mainHandler.removeCallbacksAndMessages(null);
         stopReceiver();
         playback.release();
         serverExecutor.shutdown();
@@ -238,9 +251,77 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     }
 
     private void bringAppToFront() {
-        Intent intent = new Intent(this, MainActivity.class);
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-        startActivity(intent);
+        if (!openAutomatically(this)) {
+            return;
+        }
+        // Android 10+ silently ignores this from the background unless the app may "display
+        // over other apps"; Settings shows whether that's granted. Android 5-9 always allows it.
+        try {
+            Intent intent = new Intent(this, MainActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            startActivity(intent);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Could not bring the app to the front", e);
+        }
+    }
+
+    // --- Background behaviour settings (static so BootReceiver/MainActivity can read them) ---
+
+    static boolean startOnBoot(Context ctx) {
+        return ctx.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("start_on_boot", true);
+    }
+
+    static void setStartOnBoot(Context ctx, boolean on) {
+        ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("start_on_boot", on).apply();
+    }
+
+    static boolean openAutomatically(Context ctx) {
+        return ctx.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("auto_open", true);
+    }
+
+    static void setOpenAutomatically(Context ctx, boolean on) {
+        ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("auto_open", on).apply();
+    }
+
+    /** Whether Android lets this app come to the front by itself (needed for auto-open). */
+    static boolean canOpenFromBackground(Context ctx) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return true;
+        }
+        return Settings.canDrawOverlays(ctx);
+    }
+
+    // --- Network changes: re-advertise on the new address, no polling while idle ---
+
+    @SuppressWarnings("deprecation") // CONNECTIVITY_ACTION is the one signal that works on 5.0 through 14
+    private void watchNetwork() {
+        networkReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                // Wi-Fi often reports several changes in a row; act once things settle.
+                mainHandler.removeCallbacks(networkCheck);
+                mainHandler.postDelayed(networkCheck, 3000);
+            }
+        };
+        registerReceiver(networkReceiver, new IntentFilter(ConnectivityManager.CONNECTIVITY_ACTION));
+    }
+
+    private void onNetworkMaybeChanged() {
+        List<String> now = localAddresses();
+        if (now.isEmpty() && runningAddresses.isEmpty()) {
+            mainHandler.postDelayed(networkCheck, 30000); // still offline: keep the slow safety net
+            return;
+        }
+        if (now.equals(runningAddresses) && server != null) {
+            return; // nothing changed: don't interrupt a session in progress
+        }
+        Log.i(TAG, "Network changed " + runningAddresses + " -> " + now + ", restarting receiver");
+        restart();
+        mainHandler.post(() -> {
+            if (ui != null) {
+                ui.onStatusChanged();
+            }
+        });
     }
 
     // --- Receiver lifecycle (moved out of the Activity so it survives the app closing) ---
@@ -248,9 +329,13 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     private void startReceiver() {
         String name = receiverName();
         List<String> addresses = localAddresses();
+        runningAddresses = addresses;
         if (addresses.isEmpty()) {
             updateNotification();
-            mainHandler.postDelayed(this::startReceiver, 5000); // Wi-Fi may still be coming up
+            // The network receiver restarts us as soon as Wi-Fi/Ethernet comes up; this slow
+            // retry is only a safety net for boxes that don't send the broadcast.
+            mainHandler.removeCallbacks(networkCheck);
+            mainHandler.postDelayed(networkCheck, 30000);
             return;
         }
 
@@ -301,6 +386,9 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
         if (multicastLock != null && multicastLock.isHeld()) {
             multicastLock.release();
         }
+        // Drop it so startReceiver() acquires a fresh one; before, a restart (e.g. Rename) left
+        // the lock released and mDNS could stop reaching the phone on some boxes.
+        multicastLock = null;
     }
 
     /** Restart under a new name without a full service restart, e.g. after Rename. */

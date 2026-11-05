@@ -2,3 +2,8 @@
 build/
 */build/
 local.properties
+
+# Signing keys must never be committed (see tools/create-signing-key.bat)
+*.keystore
+*.jks
+airmirror-signing-*.txt
