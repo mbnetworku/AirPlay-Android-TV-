@@ -86,7 +86,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
             service = ((MirrorService.LocalBinder) binder).service();
             service.registerUi(MainActivity.this);
             if (pendingSurface != null) {
-                service.playback().setSurface(pendingSurface);
+                service.setSurface(pendingSurface);
             }
             refreshStatus();
             service.checkPendingApproval();
@@ -218,7 +218,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
     public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
         Surface surface = new Surface(texture);
         if (service != null) {
-            service.playback().setSurface(surface);
+            service.setSurface(surface);
         } else {
             pendingSurface = surface;
         }
@@ -232,7 +232,7 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
     public boolean onSurfaceTextureDestroyed(SurfaceTexture texture) {
         pendingSurface = null;
         if (service != null) {
-            service.playback().setSurface(null);
+            service.setSurface(null);
         }
         return true; // we're done with it; let the system release it
     }
@@ -471,6 +471,13 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
         into.addView(step(1, getString(R.string.step_1)));
         into.addView(step(2, getString(R.string.step_2)));
         into.addView(step(3, getString(R.string.step_3)));
+        if (MirrorService.androidShareEnabled(this)) {
+            into.addView(space(16));
+            TextView android = text(16, GlassTheme.TEXT_TERTIARY, false);
+            android.setGravity(Gravity.START);
+            android.setText(R.string.how_to_android);
+            into.addView(android);
+        }
     }
 
     private void buildSettingsPanel(LinearLayout into) {
@@ -534,6 +541,20 @@ public class MainActivity extends Activity implements MirrorService.UiCallback, 
                     if (!autoOn && !MirrorService.canOpenFromBackground(this)) {
                         requestOverlayPermission();
                     }
+                    rebuildRightPanel();
+                }));
+        into.addView(space(24));
+
+        // --- Android phones ---
+        into.addView(sectionLabel(R.string.settings_android_section));
+        into.addView(space(10));
+        boolean androidOn = MirrorService.androidShareEnabled(this);
+        into.addView(settingsToggle("android_share", R.string.settings_android_title,
+                getString(R.string.settings_android_subtitle), androidOn, v -> {
+                    if (service != null) {
+                        service.setAndroidShareEnabled(!androidOn);
+                    }
+                    focusKey = "android_share";
                     rebuildRightPanel();
                 }));
         into.addView(space(24));

@@ -9,6 +9,7 @@ import com.github.serezhka.airplay.protocol.media.VideoStreamInfo;
 import com.github.serezhka.airplay.server.ControlExchange;
 import com.github.serezhka.airplay.server.Playback;
 
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -46,6 +47,7 @@ public class MirrorPlayback implements Playback {
     private volatile Surface surface;
     private volatile MediaPlayer vodPlayer;
     private volatile boolean vodActive;
+    private volatile BooleanSupplier otherSourceBusy = () -> false;
 
     public MirrorPlayback(Listener listener) {
         this.listener = listener;
@@ -74,6 +76,22 @@ public class MirrorPlayback implements Playback {
         releaseVodPlayer();
     }
 
+    /**
+     * True while an Android phone is sharing its screen: AirPlay video then stays blank until
+     * that phone stops (one screen, one sender at a time). Has no effect otherwise.
+     */
+    public void setOtherSourceBusy(BooleanSupplier busy) {
+        this.otherSourceBusy = busy == null ? () -> false : busy;
+    }
+
+    private boolean refusedBecauseBusy(String what) {
+        if (!otherSourceBusy.getAsBoolean()) {
+            return false;
+        }
+        Log.i(TAG, what + " from " + clientName + " refused: an Android phone is sharing");
+        return true;
+    }
+
     /** Pass {@code null} to allow every device without asking. */
     public void setApprovalGate(ApprovalGate gate) {
         this.approvalGate = gate;
@@ -96,6 +114,10 @@ public class MirrorPlayback implements Playback {
     @Override
     public void onVideoFormat(VideoStreamInfo videoStreamInfo) {
         Log.i(TAG, "Video stream: " + videoStreamInfo + " from " + clientName);
+        if (refusedBecauseBusy("Mirroring")) {
+            approved = false; // drop its frames until it disconnects (reset there)
+            return;
+        }
         ApprovalGate gate = approvalGate;
         if (gate == null) {
             beginMirroring();
@@ -135,6 +157,10 @@ public class MirrorPlayback implements Playback {
             return; // waiting on (or declined) approval; drop frames instead of decoding them
         }
         if (!videoActive) {
+            if (refusedBecauseBusy("Mirroring")) {
+                approved = false;
+                return;
+            }
             beginMirroring();
         }
         video.feed(bytes);
@@ -218,6 +244,9 @@ public class MirrorPlayback implements Playback {
     @Override
     public void onPlaylist(String playlistUri) {
         Log.i(TAG, "Cast video: " + playlistUri + " from " + clientName);
+        if (refusedBecauseBusy("Video cast")) {
+            return;
+        }
         ApprovalGate gate = approvalGate;
         if (gate == null) {
             startVodPlayback(playlistUri);

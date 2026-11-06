@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- In-app updates from GitHub Releases. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Phone side of Android screen sharing ("Share to TV"). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
@@ -48,6 +50,25 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Listens for an AirPlay screen-mirroring connection from a phone" />
         </service>
+
+        <!-- On a phone: share its screen to a TV running this app. -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:icon="@drawable/ic_launcher"
+            android:label="@string/share_title"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.airmirror.tv.share">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".ShareService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <receiver
             android:name=".BootReceiver"
