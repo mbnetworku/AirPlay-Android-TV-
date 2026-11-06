@@ -21,8 +21,8 @@ public class BootReceiver extends BroadcastReceiver {
                 && !"android.intent.action.QUICKBOOT_POWERON".equals(action)) {
             return;
         }
-        if (!MirrorService.startOnBoot(context)) {
-            return;
+        if (!MirrorService.startOnBoot(context) || !MirrorService.usedAsReceiver(context)) {
+            return; // e.g. a phone that only uses "Share to TV" never runs the TV receiver
         }
         Intent service = new Intent(context, MirrorService.class);
         try {

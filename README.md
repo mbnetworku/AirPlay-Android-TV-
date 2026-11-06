@@ -217,6 +217,31 @@ The first time, Android may ask you to allow AirMirror TV to **install unknown a
 
 ---
 
+## 🤖 Share from an Android phone
+
+The same app also lets **Android phones** show their screen on the TV.
+
+1. Install the same `AirMirrorTV.apk` on the Android phone (Android 5.0+).
+2. On the phone, open **Share to TV**. It's a separate icon the app adds.
+3. Tap the TV in the list. If it's not listed, type the TV address shown on the TV screen.
+4. Allow screen capture on the phone, and **Allow** on the TV the first time.
+5. To stop, tap **Stop sharing** in the phone's notification or in Share to TV.
+
+| | |
+|---|---|
+| 🔁 **One at a time** | While an iPhone is mirroring, an Android phone gets "TV is busy", and the other way round. |
+| 🔐 **Same rules** | Uses your **Who can connect** setting and Allow/Deny list. |
+| 🚀 **Opens by itself** | The TV app comes to the front when a phone starts sharing, as with AirPlay. |
+| 🔇 **Picture only for now** | Sound from Android phones comes in a later update (Android 10+). |
+| 🪶 **No battery cost on the phone** | A phone that only uses Share to TV never runs the TV receiver in the background. |
+
+Turn it off on the TV in **Settings → Android phones can share**.
+
+> [!NOTE]
+> Android's built-in **Cast** (Google Cast) and **Smart View / Screen Cast** (Miracast) can't target this app: Android only lets certified devices or TV makers receive those. That's why the phone needs AirMirror TV too.
+
+---
+
 ## 🎮 Remote control
 
 | Button | Home screen | While mirroring |
@@ -240,6 +265,7 @@ Settings opens right on the home screen, in the right-hand panel. Select **Done*
 | 🌐 **Anyone can connect** | No prompt. Every device on the network connects straight away. |
 | 🔌 **Start when the TV turns on** *(on)* | Starts the receiver in the background at power-on, so the iPhone always finds the TV. |
 | 🚀 **Open automatically** *(on)* | Brings the app to the front when you start AirPlay. On Android 10+ this needs **Display over other apps** (see below). |
+| 🤖 **Android phones can share** *(on)* | Lets phones running this app share their screen with **Share to TV**. Off: the TV behaves as AirPlay-only. |
 | ⬆️ **Check for updates** | Looks for a newer version on GitHub and installs it. |
 
 ### 🚀 Making "Open automatically" work on Android 10 and newer
@@ -376,6 +402,8 @@ iPhone ──mDNS──▶ discovery ──▶ pairing ──▶ FairPlay handsh
 | `app/.../GlassTheme.java` | Shared Liquid Glass colours, panels and buttons |
 | `app/.../UpdateChecker.java`, `ApkProvider.java` | In-app updates from GitHub Releases |
 | `app/.../BootReceiver.java` | Starts the receiver when the TV turns on |
+| `app/.../AndroidShareReceiver.java` | TV side of Android sharing: own port (47100), own decoder, Allow/Deny, one-at-a-time |
+| `app/.../ShareActivity.java`, `ShareService.java` | Phone side ("Share to TV"): finds TVs, captures and H.264-encodes the screen |
 | `app/.../MirrorPlayback.java` | Routes mirroring, casting and audio to the decoders |
 | `app/.../VideoDecoder.java` · `AudioDecoder.java` · `AlacDecoder.java` | Hardware video, AAC and pure-Java ALAC decoding |
 
@@ -387,7 +415,8 @@ iPhone ──mDNS──▶ discovery ──▶ pairing ──▶ FairPlay handsh
 
 | Version | What's new |
 |:---:|---|
-| **1.19** | ⬆️ Updates download quietly in the background (checked once a day, never while mirroring), so **Install** is instant · 🔔 "Update ready" notification · 🔐 Signing secrets are trimmed and checked before building |
+| **1.20** | 🤖 Android phones can share their screen (picture) with the new **Share to TV**, one device at a time, with the same Allow/Deny rules · ⚙️ Settings switch to turn it off |
+| 1.19 | ⬆️ Updates download quietly in the background (checked once a day, never while mirroring), so **Install** is instant · 🔔 "Update ready" notification · 🔐 Signing secrets are trimmed and checked before building |
 | 1.18 | 🚀 Opens automatically when AirPlay starts · 🔌 Starts with the TV · ⬆️ In-app updates from GitHub · 🪶 Fewer background threads; restarts only when the network changes instead of polling · 🛠️ Fixed the iPhone sometimes losing the TV after a Rename · ⚙️ New Background and About & updates settings |
 | 1.17 | 🧊 Rename popup redesigned in the glass style · ⬅️ **Back** closes Settings instead of leaving the app · ✅ Settings button shows **Done** while open · 📖 New README with download buttons · 🤖 Automatic APK builds |
 | 1.16 | Liquid Glass redesign; Settings merged into the home screen |

@@ -78,6 +78,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private MirrorPlayback playback;
+    private AndroidShareReceiver androidShare;
     private AirPlayServer server;
     private WifiManager.MulticastLock multicastLock;
     private volatile UiCallback ui;
@@ -103,10 +104,15 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     public void onCreate() {
         super.onCreate();
         playback = new MirrorPlayback(this);
+        androidShare = new AndroidShareReceiver(this, androidListener);
+        // One sender at a time: Android waits while AirPlay shows something, and the other way round.
+        androidShare.setOtherSourceBusy(() -> mirroring);
+        playback.setOtherSourceBusy(() -> androidShare.isActive());
         applyConnectMode();
         MdnsAdvertiser.deviceIdOverride = deviceId();
         startForeground(1, buildNotification(getString(R.string.status_starting)));
         startReceiver();
+        applyAndroidShare();
         watchNetwork();
         UpdateChecker.cleanUp(this);
         mainHandler.postDelayed(backgroundUpdate, FIRST_UPDATE_CHECK_MS);
@@ -131,6 +137,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
         }
         mainHandler.removeCallbacksAndMessages(null);
         stopReceiver();
+        androidShare.stop();
         playback.release();
         serverExecutor.shutdown();
     }
@@ -180,6 +187,62 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
         updateNotification();
     }
 
+    /** The TV screen's surface, for whichever sender (AirPlay or an Android phone) is showing. */
+    void setSurface(android.view.Surface surface) {
+        playback.setSurface(surface);
+        androidShare.setSurface(surface);
+    }
+
+    // --- Android phones sharing their screen (same app on the phone) ---
+
+    private final AndroidShareReceiver.Listener androidListener = new AndroidShareReceiver.Listener() {
+        @Override
+        public void onAndroidStarted(String deviceName) {
+            bringAppToFront();
+            mainHandler.post(() -> {
+                updateNotification();
+                if (ui != null) {
+                    ui.onMirroringStarted();
+                }
+            });
+        }
+
+        @Override
+        public void onAndroidStopped() {
+            mainHandler.post(() -> {
+                updateNotification();
+                if (ui != null) {
+                    ui.onMirroringStopped();
+                }
+            });
+        }
+
+        @Override
+        public void onAndroidVideoSize(int width, int height) {
+            mainHandler.post(() -> {
+                if (ui != null) {
+                    ui.onVideoSize(width, height);
+                }
+            });
+        }
+    };
+
+    static boolean androidShareEnabled(Context ctx) {
+        return ctx.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("android_share", true);
+    }
+
+    void setAndroidShareEnabled(boolean on) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean("android_share", on).apply();
+        applyAndroidShare();
+    }
+
+    private void applyAndroidShare() {
+        androidShare.stop();
+        if (androidShareEnabled(this)) {
+            androidShare.start(receiverName());
+        }
+    }
+
     MirrorPlayback playback() {
         return playback;
     }
@@ -200,6 +263,9 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     private void applyConnectMode() {
         boolean gated = !MODE_NONE.equals(connectMode());
         playback.setApprovalGate(gated ? this : null);
+        if (androidShare != null) {
+            androidShare.setGate(gated ? this::requestApproval : null);
+        }
     }
 
     // --- MirrorPlayback.ApprovalGate (called from Netty threads) ---
@@ -275,6 +341,14 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     }
 
     // --- Background behaviour settings (static so BootReceiver/MainActivity can read them) ---
+
+    /**
+     * True once this device has run the TV receiver (its identity exists). A phone that only
+     * ever opened "Share to TV" stays false, so it never starts the receiver at boot.
+     */
+    static boolean usedAsReceiver(Context ctx) {
+        return ctx.getSharedPreferences(PREFS, MODE_PRIVATE).contains("device_id");
+    }
 
     static boolean startOnBoot(Context ctx) {
         return ctx.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean("start_on_boot", true);
@@ -404,6 +478,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     void restart() {
         stopReceiver();
         startReceiver();
+        applyAndroidShare(); // re-announce under the new name / network address
     }
 
     boolean isReady() {
@@ -425,7 +500,7 @@ public class MirrorService extends Service implements MirrorPlayback.Listener, M
     private void backgroundUpdateCheck() {
         mainHandler.removeCallbacks(backgroundUpdate);
         mainHandler.postDelayed(backgroundUpdate, UPDATE_CHECK_EVERY_MS);
-        if (mirroring) {
+        if (mirroring || androidShare.isActive()) {
             // Never compete with a picture for Wi-Fi; try again in an hour.
             mainHandler.removeCallbacks(backgroundUpdate);
             mainHandler.postDelayed(backgroundUpdate, 60 * 60 * 1000L);
